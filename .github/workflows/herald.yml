@@ -1,0 +1,37 @@
+name: Herald notify
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests
+
+      - name: Restore cookies file from secret
+        run: |
+          echo "$COOKIES_JSON" > herald_playwekings.ru.json
+        env:
+          COOKIES_JSON: ${{ secrets.COOKIES_JSON }}
+
+      - name: Run notifier
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_IDS: ${{ secrets.CHAT_IDS }}
+          COOKIES_FILE: herald_playwekings.ru.json
+          STATE_FILE: notify_state.json
+        run: |
+          python herald/bot.py

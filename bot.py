@@ -303,20 +303,29 @@ def notify_if_needed(
 	)
 	dragon_sec = monk.get("dragon")
 	serpent_sec = monk.get("serpent")
+	print(dragon_sec, serpent_sec)
 
 	for beast, sec in (("dragon", dragon_sec), ("serpent", serpent_sec)):
 		if sec is None:
 			continue
 		for thr in thresholds_sec:
-			if abs(sec - thr) <= window_sec:
-				key = f"{beast}_{thr}"
-				if state.get(key) != today:
-					city = "Гранд" if beast == "dragon" else "Норлунг"
-					who = "дракона" if beast == "dragon" else "змея"
-					msg = f"Храбрые викинги, внимание! Мудрый монах предрекает нападение {who} на {city} через {_humanize_time_ru(int(sec))}!"
-					print(msg)
-					tg_send(bot_token, chat_ids[0], msg)
-					state[key] = today
+			delta = thr - sec
+			in_early_window = 0 <= delta <= EARLY_SLACK_SEC
+			in_late_window  = -LATE_SLACK_SEC <= delta < 0
+
+			if not (in_early_window or in_late_window):
+				continue
+
+			key = f"{beast}_{thr}"
+			if state.get(key) == today:
+				continue
+
+			city = "Гранд" if beast == "dragon" else "Норлунг"
+			who = "дракона" if beast == "dragon" else "змея"
+			msg = f"Храбрые викинги, внимание! Мудрый монах предрекает нападение {who} на {city} через {_humanize_time_ru(int(sec))}!"
+			print(msg)
+			tg_send(bot_token, chat_ids, msg)
+			state[key] = today
 
 
 	merc = fetch_and_parse(
@@ -341,10 +350,10 @@ CHAT_IDS = [x.strip() for x in env_get("CHAT_IDS", "").split(",") if x.strip()]
 #~ print(requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates").json())
 
 notify_if_needed(
-    cookies_path=env_get("COOKIES_FILE", "herald_playwekings.ru.json"),
-    bot_token=BOT_TOKEN,
-    chat_ids=CHAT_IDS,
-    thresholds_sec=[5400, 2400, 300],
-    window_sec=300,
-    state_file=env_get("STATE_FILE", "notify_state.json"),
+	cookies_path=env_get("COOKIES_FILE", "herald_playwekings.ru.json"),
+	bot_token=BOT_TOKEN,
+	chat_ids=CHAT_IDS,
+	thresholds_sec=[90*60, 45*60, 5*60],
+	window_sec=5*60,
+	state_file=env_get("STATE_FILE", "notify_state.json"),
 )

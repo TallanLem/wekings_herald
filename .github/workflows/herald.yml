@@ -1,51 +1,30 @@
-name: Herald notify
+name: Run Herald Bot
 
 on:
   schedule:
-    - cron: '*/5 * * * *'
+    - cron: "*/10 * * * *"  # каждые 10 минут
   workflow_dispatch:
 
 jobs:
-  notify:
+  run-bot:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          ref: main
-
-      - name: Show repo tree (debug)
-        run: |
-          pwd
-          ls -la
-          ls -la herald || true
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Install deps
-        run: |
-          python -m pip install --upgrade pip
-          pip install requests
+      - name: Install dependencies
+        run: pip install requests
 
-      - name: Restore cookies file from secret
-        run: |
-          test -n "$COOKIES_JSON" || { echo "COOKIES_JSON secret is empty"; exit 1; }
-          echo "$COOKIES_JSON" > herald_playwekings.ru.json
-          ls -la herald_playwekings.ru.json
+      - name: Run bot
         env:
-          COOKIES_JSON: ${{ secrets.COOKIES_JSON }}
-
-      - name: Run notifier
-        env:
-          BOT_TOKEN:  ${{ secrets.BOT_TOKEN }}        
-          CHAT_IDS:   ${{ secrets.CHAT_IDS }}   
-          COOKIES_FILE: ../herald_playwekings.ru.json  
-          STATE_FILE: ../notify_state.json             
-        run: |
-          python bot.py
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_IDS: ${{ secrets.CHAT_IDS }}
+          COOKIES_FILE: herald_playwekings.ru.json
+          STATE_FILE: notify_state.json
+        run: python bot.py

@@ -34,4 +34,4 @@ jobs:
           COOKIES_FILE: herald_playwekings.ru.json
           STATE_FILE: notify_state.json
         run: |
-          python herald/bot.py
+          python bot.py

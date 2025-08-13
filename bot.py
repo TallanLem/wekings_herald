@@ -308,6 +308,10 @@ def notify_if_needed(
 	for beast, sec in (("dragon", dragon_sec), ("serpent", serpent_sec)):
 		if sec is None:
 			continue
+
+		EARLY_SLACK_SEC = 10 * 60
+		LATE_SLACK_SEC  = 5 * 60
+
 		for thr in thresholds_sec:
 			delta = thr - sec
 			in_early_window = 0 <= delta <= EARLY_SLACK_SEC

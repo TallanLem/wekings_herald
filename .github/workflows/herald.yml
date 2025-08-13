@@ -2,7 +2,7 @@ name: Run Herald Bot
 
 on:
   schedule:
-    - cron: "*/5 * * * *"   # every 10 minutes (UTC)
+    - cron: "*/5 * * * *" 
   workflow_dispatch:
 
 jobs:

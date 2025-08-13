@@ -344,7 +344,7 @@ notify_if_needed(
     cookies_path=env_get("COOKIES_FILE", "herald_playwekings.ru.json"),
     bot_token=BOT_TOKEN,
     chat_ids=CHAT_IDS,
-    thresholds_sec=[5400, 2400, 120],
+    thresholds_sec=[5400, 2400, 300],
     window_sec=300,
     state_file=env_get("STATE_FILE", "notify_state.json"),
 )

@@ -303,7 +303,6 @@ def notify_if_needed(
 	)
 	dragon_sec = monk.get("dragon")
 	serpent_sec = monk.get("serpent")
-	print(dragon_sec, serpent_sec)
 
 	for beast, sec in (("dragon", dragon_sec), ("serpent", serpent_sec)):
 		if sec is None:
@@ -316,7 +315,7 @@ def notify_if_needed(
 					who = "дракона" if beast == "dragon" else "змея"
 					msg = f"Храбрые викинги, внимание! Мудрый монах предрекает нападение {who} на {city} через {_humanize_time_ru(int(sec))}!"
 					print(msg)
-					tg_send(bot_token, chat_ids, msg)
+					tg_send(bot_token, chat_ids[0], msg)
 					state[key] = today
 
 
@@ -338,6 +337,7 @@ def notify_if_needed(
 
 BOT_TOKEN = env_get("BOT_TOKEN", "")
 CHAT_IDS = [x.strip() for x in env_get("CHAT_IDS", "").split(",") if x.strip()]
+#~ print(CHAT_IDS)
 #~ print(requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates").json())
 
 notify_if_needed(

@@ -42,7 +42,6 @@ jobs:
           COOKIES_JSON: ${{ secrets.COOKIES_JSON }}
 
       - name: Run notifier
-        working-directory: herald
         env:
           BOT_TOKEN:  ${{ secrets.BOT_TOKEN }}        
           CHAT_IDS:   ${{ secrets.CHAT_IDS }}   

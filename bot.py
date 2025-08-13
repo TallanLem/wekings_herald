@@ -295,7 +295,6 @@ def notify_if_needed(
 	today = datetime.now().date().isoformat()
 	state = _load_state(state_file)
 
-	# --- Монах: будильники на дракона/змея ---
 	monk = fetch_and_parse(
 		cookies_path=cookies_path,
 		url_path="/monastic",
@@ -304,6 +303,7 @@ def notify_if_needed(
 	)
 	dragon_sec = monk.get("dragon")
 	serpent_sec = monk.get("serpent")
+	print(dragon_sec, serpent_sec)
 
 	for beast, sec in (("dragon", dragon_sec), ("serpent", serpent_sec)):
 		if sec is None:
@@ -319,7 +319,7 @@ def notify_if_needed(
 					tg_send(bot_token, chat_ids, msg)
 					state[key] = today
 
-	# --- Владыка Наемников: одно уведомление в день по самому свежему событию ---
+
 	merc = fetch_and_parse(
 		cookies_path=cookies_path,
 		url_path="/events",
@@ -336,8 +336,8 @@ def notify_if_needed(
 	_save_state(state_file, state)
 
 
-
 BOT_TOKEN = env_get("BOT_TOKEN", "")
+CHAT_IDS = [x.strip() for x in env_get("CHAT_IDS", "").split(",") if x.strip()]
 #~ print(requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates").json())
 
 notify_if_needed(

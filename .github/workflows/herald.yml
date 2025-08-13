@@ -8,8 +8,20 @@ on:
 jobs:
   notify:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Show repo tree (debug)
+        run: |
+          pwd
+          ls -la
+          ls -la herald || true
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -23,15 +35,18 @@ jobs:
 
       - name: Restore cookies file from secret
         run: |
+          test -n "$COOKIES_JSON" || { echo "COOKIES_JSON secret is empty"; exit 1; }
           echo "$COOKIES_JSON" > herald_playwekings.ru.json
+          ls -la herald_playwekings.ru.json
         env:
           COOKIES_JSON: ${{ secrets.COOKIES_JSON }}
 
       - name: Run notifier
+        working-directory: herald
         env:
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-          CHAT_IDS: ${{ secrets.CHAT_IDS }}
-          COOKIES_FILE: herald_playwekings.ru.json
-          STATE_FILE: notify_state.json
+          BOT_TOKEN:  ${{ secrets.BOT_TOKEN }}        
+          CHAT_IDS:   ${{ secrets.CHAT_IDS }}   
+          COOKIES_FILE: ../herald_playwekings.ru.json  
+          STATE_FILE: ../notify_state.json             
         run: |
           python bot.py

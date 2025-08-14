@@ -309,8 +309,8 @@ def notify_if_needed(
 		if sec is None:
 			continue
 
-		EARLY_SLACK_SEC = 10 * 60
-		LATE_SLACK_SEC  = 5 * 60
+		EARLY_SLACK_SEC = 12 * 60
+		LATE_SLACK_SEC  = 12 * 60
 
 		for thr in thresholds_sec:
 			delta = thr - sec

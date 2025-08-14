@@ -148,7 +148,7 @@ def monastic_block(
 	city_serpent: str = "Норлунг",
 ) -> dict:
 	time_re = re.compile(
-		r'Предвижу\s+нападение\s+(?P<beast>\S+)\s+через\s*(?P<time>[0-9:\s]+)?',
+		r'Предвижу\s+нападение\s+(?P<beast>[^<\n]+?)\s+через\s*(?P<time>(?:\d{1,2}:)?\d{1,2}:\d{2}|\d+)',
 		flags=re.IGNORECASE
 	)
 

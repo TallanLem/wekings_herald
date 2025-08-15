@@ -1,43 +1,40 @@
-name: Run Herald Bot
+name: Herald
 
 on:
   schedule:
-    - cron: "*/5 * * * *" 
+    - cron: "*/5 * * * *"
   workflow_dispatch:
 
 jobs:
-  run-bot:
+  run:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: main
+          persist-credentials: true
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.x"
 
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install requests
+        run: pip install -r requirements.txt
 
-      - name: Restore cookies file from secret
-        run: |
-          test -n "$COOKIES_JSON" || { echo "COOKIES_JSON secret is empty"; exit 1; }
-          echo "$COOKIES_JSON" > herald_playwekings.ru.json
-          ls -la herald_playwekings.ru.json
-        env:
-          COOKIES_JSON: ${{ secrets.COOKIES_JSON }}
+      - name: Run herald bot
+        run: python bot.py
 
-      - name: Run bot
-        env:
-          BOT_TOKEN:   ${{ secrets.BOT_TOKEN }}
-          CHAT_IDS:    ${{ secrets.CHAT_IDS }}
-          COOKIES_FILE: herald_playwekings.ru.json
-          STATE_FILE:   notify_state.json
+      - name: Commit notify_state.json if changed
         run: |
-          ls -la
-          python bot.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [[ `git status --porcelain notify_state.json` ]]; then
+            git add notify_state.json
+            git commit -m "Update notify_state.json [skip ci]"
+            git push
+          else
+            echo "No changes in notify_state.json"
+          fi

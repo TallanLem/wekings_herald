@@ -2,7 +2,7 @@ name: Herald
 
 on:
   schedule:
-    - cron: '*/10 * * * *'
+    - cron: '*/5 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -21,21 +21,34 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.x'
+          python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          else
+            pip install requests
+          fi
 
       - name: Write secrets to files
         run: |
-          mkdir -p ~/.config/herald
+          # сохраняем JSON из секрета без повреждения
           cat <<'EOF' > herald_playwekings.ru.json
           ${{ secrets.COOKIES_JSON }}
           EOF
-          echo "${{ secrets.BOT_TOKEN }}" > bot_token.txt
+          # если бот читает токен из env, файл не обязателен,
+          # но оставлю на случай отладки:
+          printf "%s" "${{ secrets.BOT_TOKEN }}" > bot_token.txt
 
       - name: Run Herald bot
-        run: python bot.py
+        env:
+          BOT_TOKEN:    ${{ secrets.BOT_TOKEN }}
+          CHAT_IDS:     ${{ secrets.CHAT_IDS }}
+          COOKIES_FILE: herald_playwekings.ru.json
+          STATE_FILE:   notify_state.json
+        run: |
+          python bot.py
 
       - name: Commit notify_state.json if changed
         run: |
@@ -44,5 +57,9 @@ jobs:
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add notify_state.json
             git commit -m "Update notify_state.json [skip ci]"
+            # на случай гонки с параллельным ранром:
+            git pull --rebase origin $(git rev-parse --abbrev-ref HEAD) || true
             git push
+          else
+            echo "No changes in notify_state.json"
           fi

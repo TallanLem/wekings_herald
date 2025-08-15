@@ -172,6 +172,8 @@ def merc_lord_block(html: str) -> dict:
 	candidates = []
 	for m in lord_re.finditer(html):
 		city = m.group(1).strip()
+		if city and city[-1].lower() in "аеёиоуыэюя":
+			city = city[:-1]
 		start = max(0, m.start() - 400)
 		end = min(len(html), m.end() + 300)
 		chunks = (

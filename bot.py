@@ -4,7 +4,7 @@ import re, json, time, requests, os, sys
 from pathlib import Path
 from collections import Counter
 from typing import Dict, Optional, Union, Iterable, Callable, Tuple
-from datetime import datetime, date
+from datetime import datetime, date, timedelta, timezone
 
 
 def load_env_file(path: str = ".env") -> dict:
@@ -152,9 +152,6 @@ def monastic_block(
 		flags=re.IGNORECASE
 	)
 
-	def _in_window(sec: Optional[int]) -> bool:
-		return sec is not None and any(abs(sec - c) <= window_sec for c in thresholds_sec)
-
 	out: Dict[str, Optional[int]] = {'dragon': None, 'serpent': None}
 	for m in time_re.finditer(html):
 		beast = (m.group('beast') or '').strip().lower()
@@ -163,16 +160,6 @@ def monastic_block(
 			out['dragon'] = secs
 		elif 'зме' in beast:
 			out['serpent'] = secs
-
-	messages: list[str] = []
-	if _in_window(out['dragon']):
-		when = _humanize_time_ru(int(out['dragon']))
-		messages.append(f"Храбрые викинги, внимание! Мудрый монах предрекает нападение дракона на {city_dragon} через {when}!")
-	if _in_window(out['serpent']):
-		when = _humanize_time_ru(int(out['serpent']))
-		messages.append(f"Храбрые викинги, внимание! Мудрый монах предрекает нападение змея на {city_serpent} через {when}!")
-
-	out['messages'] = messages
 	return out
 
 def merc_lord_block(html: str) -> dict:
@@ -207,21 +194,20 @@ def merc_lord_block(html: str) -> dict:
 		candidates.append((dt, city, when_str))
 
 	if not candidates:
-		return {"city": None, "when_str": None, "when_iso": None, "messages": []}
+		return {"city": None, "when_str": None, "when_iso": None}
 
 	today = date.today()
 	todays = [(dt, city, when_str) for dt, city, when_str in candidates if dt.date() == today]
 	if not todays:
-		return {"city": None, "when_str": None, "when_iso": None, "messages": []}
+		return {"city": None, "when_str": None, "when_iso": None}
 
 	best_dt, best_city, best_when = max(todays, key=lambda x: x[0])
-	msg = f"К городу {best_city} приближается Владыка Наемников! Готовьтесь к бою!"
 	return {
-		 "city": best_city,
-		 "when_str": best_when,
-		 "when_iso": best_dt.isoformat(timespec="seconds"),
-		 "messages": [msg],
-		}
+		"city": best_city,
+		"when_str": best_when,
+		"when_iso": best_dt.isoformat(timespec="seconds"),
+	}
+
 
 def _tg_post(method: str, token: str, payload: dict, timeout: int = 20) -> dict:
 	url = f"https://api.telegram.org/bot{token}/{method}"
@@ -295,6 +281,15 @@ def notify_if_needed(
 	today = datetime.now().date().isoformat()
 	state = _load_state(state_file)
 
+	MSK = timezone(timedelta(hours=3))
+
+	def _eta_msk_label(seconds: int) -> str:
+		sec = max(int(seconds), 0)
+		now_msk = datetime.now(MSK)
+		eta = now_msk + timedelta(seconds=sec)
+		return f"(в {eta:%H:%M})" if eta.date() == now_msk.date() else f"(в {eta:%H:%M %d.%m})"
+
+	# МОНАХ
 	monk = fetch_and_parse(
 		cookies_path=cookies_path,
 		url_path="/monastic",
@@ -305,18 +300,16 @@ def notify_if_needed(
 	serpent_sec = monk.get("serpent")
 	print(dragon_sec, serpent_sec)
 
+	EARLY_SLACK_SEC = 13*60
+	LATE_SLACK_SEC  = 13*60
+
 	for beast, sec in (("dragon", dragon_sec), ("serpent", serpent_sec)):
 		if sec is None:
 			continue
-
-		EARLY_SLACK_SEC = 12 * 60
-		LATE_SLACK_SEC  = 12 * 60
-
 		for thr in thresholds_sec:
 			delta = thr - sec
 			in_early_window = 0 <= delta <= EARLY_SLACK_SEC
 			in_late_window  = -LATE_SLACK_SEC <= delta < 0
-
 			if not (in_early_window or in_late_window):
 				continue
 
@@ -325,24 +318,31 @@ def notify_if_needed(
 				continue
 
 			city = "Гранд" if beast == "dragon" else "Норлунг"
-			who = "дракона" if beast == "dragon" else "змея"
-			msg = f"Храбрые викинги, внимание! Мудрый монах предрекает нападение {who} на {city} через {_humanize_time_ru(int(sec))}!"
+			who  = "дракона" if beast == "dragon" else "змея"
+			msg  = (
+				"Храбрые викинги, внимание!\n"
+				f"Мудрый монах предрекает нападение <b>{who}</b> на <b>{city}</b>\n"
+				f"через {_humanize_time_ru(int(sec))}! {_eta_msk_label(sec)}"
+			)
 			print(msg)
-			tg_send(bot_token, chat_ids, msg)
+			tg_send(bot_token, chat_ids, msg, parse_mode="HTML")
 			state[key] = today
 
-
+	# ВЛАД
 	merc = fetch_and_parse(
 		cookies_path=cookies_path,
 		url_path="/events",
 		parse_fn=merc_lord_block,
 		timeout=timeout,
 	)
-	merc_msgs = merc.get("messages", []) or []
-	if merc_msgs and state.get("lord") != today:
-		for msg in merc_msgs:
-			print(msg)
-			tg_send(bot_token, chat_ids, msg)
+	if merc.get("city") and merc.get("when_iso") and state.get("lord") != today:
+		city = merc["city"]
+		msg  = (
+			"Храбрые викинги, внимание!\n"
+			f"К городу <b>{city}</b> приближается Владыка Наемников! Готовьтесь к бою!"
+		)
+		print(msg)
+		tg_send(bot_token, chat_ids, msg, parse_mode="HTML")
 		state["lord"] = today
 
 	_save_state(state_file, state)

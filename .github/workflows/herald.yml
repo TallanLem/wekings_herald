@@ -33,12 +33,9 @@ jobs:
 
       - name: Write secrets to files
         run: |
-          # сохраняем JSON из секрета без повреждения
           cat <<'EOF' > herald_playwekings.ru.json
           ${{ secrets.COOKIES_JSON }}
           EOF
-          # если бот читает токен из env, файл не обязателен,
-          # но оставлю на случай отладки:
           printf "%s" "${{ secrets.BOT_TOKEN }}" > bot_token.txt
 
       - name: Run Herald bot
@@ -57,7 +54,6 @@ jobs:
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add notify_state.json
             git commit -m "Update notify_state.json [skip ci]"
-            # на случай гонки с параллельным ранром:
             git pull --rebase origin $(git rev-parse --abbrev-ref HEAD) || true
             git push
           else

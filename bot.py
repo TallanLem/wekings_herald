@@ -327,7 +327,8 @@ def notify_if_needed(
 				f"через {_humanize_time_ru(int(sec))}! {_eta_msk_label(sec)}"
 			)
 			print(msg)
-			tg_send(bot_token, chat_ids, msg, parse_mode="HTML")
+			resp = tg_send(bot_token, chat_ids, msg, parse_mode="HTML")
+			print(resp)
 			state[key] = today
 
 	# ВЛАД
@@ -344,7 +345,8 @@ def notify_if_needed(
 			f"К городу <b>{city}</b> приближается Владыка Наемников! Готовьтесь к бою!"
 		)
 		print(msg)
-		tg_send(bot_token, chat_ids, msg, parse_mode="HTML")
+		resp = tg_send(bot_token, chat_ids, msg, parse_mode="HTML")
+		print(resp)
 		state["lord"] = today
 
 	_save_state(state_file, state)

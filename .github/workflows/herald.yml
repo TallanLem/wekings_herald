@@ -2,29 +2,29 @@ name: Herald
 
 on:
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: '*/5 * * * *'
   workflow_dispatch:
 
 jobs:
-  run:
+  run-bot:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: true
-          fetch-depth: 0
+      - uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.x"
+          python-version: '3.x'
 
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run herald bot
+      - name: Write secrets to files
+        run: |
+          echo "${{ secrets.COOKIES_JSON }}" > herald_playwekings.ru.json
+          echo "${{ secrets.BOT_TOKEN }}" > bot_token.txt
+
+      - name: Run bot
         run: python bot.py
 
       - name: Commit notify_state.json if changed

@@ -163,36 +163,39 @@ def monastic_block(
 	return out
 
 def merc_lord_block(html: str) -> dict:
-	lord_re = re.compile(
-		r"Викинги\s+потревожили\s+Владыку\s+На[её]мников\.\s*Готовьтесь\s+к\s+бою\s+в\s+([А-ЯЁA-Z][^.!?\n]+)!",
-		re.IGNORECASE
-	)
+	lord_kw = re.compile(r"Владык[ауы]\s+На[её]мников", re.IGNORECASE)
+	# Город из ближайшей фразы "... в <Город>!"
+	city_re = re.compile(r"в\s+([А-ЯЁA-Z][^.!?\n]+)!", re.IGNORECASE)
 	ts_re = re.compile(r"(\d{2}:\d{2}\s+\d{2}\.\d{2}\.\d{2})")
 
+	def normalize_city(name: str) -> str:
+		name = name.strip()
+		if name and name[-1].lower() in "аеёиоуыэюя":
+			return name[:-1]
+		return name
+
 	candidates = []
-	for m in lord_re.finditer(html):
-		city = m.group(1).strip()
-		if city and city[-1].lower() in "аеёиоуыэюя":
-			city = city[:-1]
-		start = max(0, m.start() - 400)
-		end = min(len(html), m.end() + 300)
-		chunks = (
-			html[max(0, start-300):m.start()],
-			html[start:end],
-			html[m.end():min(len(html), m.end()+300)],
-		)
-		when_str = None
-		for win in chunks:
-			mt = ts_re.search(win)
-			if mt:
-				when_str = mt.group(1)
-				break
-		if not when_str:
+	for m in lord_kw.finditer(html):
+		# Берём окрестность упоминания Владыки и ищем там город и время
+		start = max(0, m.start() - 500)
+		end   = min(len(html), m.end() + 500)
+		ctx = html[start:end]
+
+		city = None
+		mc = city_re.search(ctx)
+		if mc:
+			city = normalize_city(mc.group(1))
+
+		mt = ts_re.search(ctx)
+		if not mt:
 			continue
+
+		when_str = mt.group(1)
 		try:
 			dt = datetime.strptime(when_str, "%H:%M %d.%m.%y")
 		except ValueError:
 			continue
+
 		candidates.append((dt, city, when_str))
 
 	if not candidates:
@@ -209,6 +212,7 @@ def merc_lord_block(html: str) -> dict:
 		"when_str": best_when,
 		"when_iso": best_dt.isoformat(timespec="seconds"),
 	}
+
 
 
 def _tg_post(method: str, token: str, payload: dict, timeout: int = 20) -> dict:

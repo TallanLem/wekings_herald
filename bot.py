@@ -334,7 +334,7 @@ if merc.get("when_iso") and state.get("lord") != today:
 	else:
 		msg = (
 			"Храбрые викинги, внимание!\n"
-			"К городам приближается Владыка Наемников! Готовьтесь к бою!"
+			"Приближается Владыка Наемников! Готовьтесь к бою!"
 		)
 	print(msg)
 	tg_send(bot_token, chat_ids, msg, parse_mode="HTML")

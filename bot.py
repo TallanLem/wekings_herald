@@ -324,23 +324,23 @@ def notify_if_needed(
 	timeout=timeout,
 )
 
-if merc.get("when_iso") and state.get("lord") != today:
-	city = merc.get("city")
-	if city:
-		msg = (
-			"Храбрые викинги, внимание!\n"
-			f"К городу <b>{city}</b> приближается Владыка Наемников! Готовьтесь к бою!"
-		)
-	else:
-		msg = (
-			"Храбрые викинги, внимание!\n"
-			"Приближается Владыка Наемников! Готовьтесь к бою!"
-		)
-	print(msg)
-	tg_send(bot_token, chat_ids, msg, parse_mode="HTML")
-	state["lord"] = today
+	if merc.get("when_iso") and state.get("lord") != today:
+		city = merc.get("city")
+		if city:
+			msg = (
+				"Храбрые викинги, внимание!\n"
+				f"К городу <b>{city}</b> приближается Владыка Наемников! Готовьтесь к бою!"
+			)
+		else:
+			msg = (
+				"Храбрые викинги, внимание!\n"
+				"Приближается Владыка Наемников! Готовьтесь к бою!"
+			)
+		print(msg)
+		tg_send(bot_token, chat_ids, msg, parse_mode="HTML")
+		state["lord"] = today
 
-	_save_state(state_file, state)
+		_save_state(state_file, state)
 
 
 BOT_TOKEN = env_get("BOT_TOKEN", "")

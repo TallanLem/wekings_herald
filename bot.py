@@ -163,40 +163,21 @@ def monastic_block(
 	return out
 
 def merc_lord_block(html: str) -> dict:
-	lord_kw = re.compile(r"Владык[ауы]\s+На[её]мников", re.IGNORECASE)
-	# Город из ближайшей фразы "... в <Город>!"
-	city_re = re.compile(r"в\s+([А-ЯЁA-Z][^.!?\n]+)!", re.IGNORECASE)
-	ts_re = re.compile(r"(\d{2}:\d{2}\s+\d{2}\.\d{2}\.\d{2})")
-
-	def normalize_city(name: str) -> str:
-		name = name.strip()
-		if name and name[-1].lower() in "аеёиоуыэюя":
-			return name[:-1]
-		return name
+	card_re = re.compile(
+		r'<span[^>]*class="[^"]*event-header[^"]*"[^>]*>\s*Владык[ауы]\s+На[её]мников\s*</span>'
+		r'.{0,200}?'  # чуть-чуть «вправо» в пределах шапки карточки
+		r'<span[^>]*class="[^"]*text-xs[^"]*"[^>]*>\s*([0-9]{2}:[0-9]{2}\s+[0-9]{2}\.[0-9]{2}\.[0-9]{2})\s*</span>',
+		re.IGNORECASE | re.DOTALL
+	)
 
 	candidates = []
-	for m in lord_kw.finditer(html):
-		# Берём окрестность упоминания Владыки и ищем там город и время
-		start = max(0, m.start() - 500)
-		end   = min(len(html), m.end() + 500)
-		ctx = html[start:end]
-
-		city = None
-		mc = city_re.search(ctx)
-		if mc:
-			city = normalize_city(mc.group(1))
-
-		mt = ts_re.search(ctx)
-		if not mt:
-			continue
-
+	for mt in card_re.finditer(html):
 		when_str = mt.group(1)
 		try:
 			dt = datetime.strptime(when_str, "%H:%M %d.%m.%y")
 		except ValueError:
 			continue
-
-		candidates.append((dt, city, when_str))
+		candidates.append((dt, None, when_str))  # города нет -> None
 
 	if not candidates:
 		return {"city": None, "when_str": None, "when_iso": None}
@@ -208,8 +189,8 @@ def merc_lord_block(html: str) -> dict:
 
 	best_dt, best_city, best_when = max(todays, key=lambda x: x[0])
 	return {
-		"city": best_city,
-		"when_str": best_when,
+		"city": best_city,               # None, если город не указан на странице
+		"when_str": best_when,           # "11:57 22.08.25"
 		"when_iso": best_dt.isoformat(timespec="seconds"),
 	}
 
@@ -337,21 +318,27 @@ def notify_if_needed(
 
 	# ВЛАД
 	merc = fetch_and_parse(
-		cookies_path=cookies_path,
-		url_path="/events",
-		parse_fn=merc_lord_block,
-		timeout=timeout,
-	)
-	if merc.get("city") and merc.get("when_iso") and state.get("lord") != today:
-		city = merc["city"]
-		msg  = (
+	cookies_path=cookies_path,
+	url_path="/events",
+	parse_fn=merc_lord_block,
+	timeout=timeout,
+)
+
+if merc.get("when_iso") and state.get("lord") != today:
+	city = merc.get("city")
+	if city:
+		msg = (
 			"Храбрые викинги, внимание!\n"
 			f"К городу <b>{city}</b> приближается Владыка Наемников! Готовьтесь к бою!"
 		)
-		print(msg)
-		resp = tg_send(bot_token, chat_ids, msg, parse_mode="HTML")
-		print(resp)
-		state["lord"] = today
+	else:
+		msg = (
+			"Храбрые викинги, внимание!\n"
+			"К городам приближается Владыка Наемников! Готовьтесь к бою!"
+		)
+	print(msg)
+	tg_send(bot_token, chat_ids, msg, parse_mode="HTML")
+	state["lord"] = today
 
 	_save_state(state_file, state)
 

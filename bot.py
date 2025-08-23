@@ -340,7 +340,7 @@ def notify_if_needed(
 		tg_send(bot_token, chat_ids, msg, parse_mode="HTML")
 		state["lord"] = today
 
-		_save_state(state_file, state)
+	_save_state(state_file, state)
 
 
 BOT_TOKEN = env_get("BOT_TOKEN", "")

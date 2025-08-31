@@ -287,7 +287,7 @@ def notify_if_needed(
 	serpent_sec = monk.get("serpent")
 	print(dragon_sec, serpent_sec)
 
-	EARLY_SLACK_SEC = 13*60
+	EARLY_SLACK_SEC = 10*60
 	LATE_SLACK_SEC  = 13*60
 
 	for beast, sec in (("dragon", dragon_sec), ("serpent", serpent_sec)):
@@ -352,7 +352,7 @@ notify_if_needed(
 	cookies_path=env_get("COOKIES_FILE", "herald_playwekings.ru.json"),
 	bot_token=BOT_TOKEN,
 	chat_ids=CHAT_IDS,
-	thresholds_sec=[90*60, 45*60, 10*60],
+	thresholds_sec=[90*60, 40*60, 10*60],
 	window_sec=5*60,
 	state_file=env_get("STATE_FILE", "notify_state.json"),
 )

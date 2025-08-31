@@ -325,19 +325,26 @@ def notify_if_needed(
 )
 
 	if merc.get("when_iso") and state.get("lord") != today:
+
+		lord_dt = datetime.fromisoformat(merc["when_iso"])
+		battle_dt = lord_dt + timedelta(hours=1)
+		time_label = battle_dt.strftime("%H:%M")
 		city = merc.get("city")
 		if city:
 			msg = (
 				"Храбрые викинги, внимание!\n"
-				f"К городу <b>{city}</b> приближается Владыка Наемников! Готовьтесь к бою!"
+				f"К городу <b>{city}</b> приближается Владыка Наемников!\n"
+				f"Готовьтесь к бою в <b>{time_label}</b>!"
 			)
 		else:
 			msg = (
 				"Храбрые викинги, внимание!\n"
-				"Приближается Владыка Наемников! Готовьтесь к бою!"
+				"Приближается Владыка Наемников!\n"
+				f"Готовьтесь к бою в <b>{time_label}</b>!"
 			)
 		print(msg)
-		tg_send(bot_token, chat_ids, msg, parse_mode="HTML")
+		resp = tg_send(bot_token, chat_ids, msg, parse_mode="HTML")
+		print(resp)
 		state["lord"] = today
 
 	_save_state(state_file, state)

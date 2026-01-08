@@ -164,20 +164,45 @@ def monastic_block(
 
 def merc_lord_block(html: str) -> dict:
 	card_re = re.compile(
-		r'<span[^>]*class="[^"]*event-header[^"]*"[^>]*>\s*Владык[ауы]\s+На[её]мников\s*</span>'
-		r'.{0,200}?'  # чуть-чуть «вправо» в пределах шапки карточки
-		r'<span[^>]*class="[^"]*text-xs[^"]*"[^>]*>\s*([0-9]{2}:[0-9]{2}\s+[0-9]{2}\.[0-9]{2}\.[0-9]{2})\s*</span>',
+		r'<div[^>]*class="[^"]*flex\s+flex-col[^"]*"[^>]*>.*?'
+		r'<span[^>]*class="[^"]*event-header[^"]*"[^>]*>\s*(?P<hdr>[^<]*?)\s*</span>.*?'
+		r'<span[^>]*class="[^"]*text-xs[^"]*"[^>]*>\s*(?P<when>\d{2}:\d{2}\s+\d{2}\.\d{2}\.\d{2})\s*</span>.*?'
+		r'</div>.*?'
+		r'<p[^>]*class="[^"]*text-sm[^"]*"[^>]*>\s*(?P<body>.*?)\s*</p>',
 		re.IGNORECASE | re.DOTALL
 	)
 
+	lord_re = re.compile(r'Владык[а-яё]*\s+На[её]мник[а-яё]*', re.IGNORECASE)
+	city_re = re.compile(r'к\s+бою\s+в\s+(?P<city>[А-ЯЁа-яё-]+)', re.IGNORECASE)
+
+	def normalize_city(word: str) -> str | None:
+		w = (word or "").strip().rstrip("!?.:,;").lower()
+		if w.startswith("гранд"):
+			return "Гранд"
+		if w.startswith("норлунг"):
+			return "Норлунг"
+		return None
+
 	candidates = []
-	for mt in card_re.finditer(html):
-		when_str = mt.group(1)
+	for m in card_re.finditer(html):
+		hdr = (m.group("hdr") or "").strip()
+		body = (m.group("body") or "").strip()
+		if not (lord_re.search(hdr) or lord_re.search(body)):
+			continue
+
+		when_str = m.group("when")
 		try:
 			dt = datetime.strptime(when_str, "%H:%M %d.%m.%y")
 		except ValueError:
 			continue
-		candidates.append((dt, None, when_str))  # города нет -> None
+
+		body_text = re.sub(r"<[^>]+>", " ", body)
+		body_text = re.sub(r"\s+", " ", body_text).strip()
+
+		mcity = city_re.search(body_text)
+		city = normalize_city(mcity.group("city")) if mcity else None
+
+		candidates.append((dt, city, when_str))
 
 	if not candidates:
 		return {"city": None, "when_str": None, "when_iso": None}
@@ -189,11 +214,10 @@ def merc_lord_block(html: str) -> dict:
 
 	best_dt, best_city, best_when = max(todays, key=lambda x: x[0])
 	return {
-		"city": best_city,               # None, если город не указан на странице
-		"when_str": best_when,           # "11:57 22.08.25"
+		"city": best_city,
+		"when_str": best_when,
 		"when_iso": best_dt.isoformat(timespec="seconds"),
 	}
-
 
 
 def _tg_post(method: str, token: str, payload: dict, timeout: int = 20) -> dict:

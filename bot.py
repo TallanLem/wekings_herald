@@ -207,7 +207,8 @@ def merc_lord_block(html: str) -> dict:
 	if not candidates:
 		return {"city": None, "when_str": None, "when_iso": None}
 
-	today = date.today()
+	MSK = timezone(timedelta(hours=3))
+	today = datetime.now(MSK).date()
 	todays = [(dt, city, when_str) for dt, city, when_str in candidates if dt.date() == today]
 	if not todays:
 		return {"city": None, "when_str": None, "when_iso": None}
@@ -289,10 +290,10 @@ def notify_if_needed(
 	timeout: int = 20,
 	state_file: Union[str, Path] = "notify_state.json",
 ) -> None:
-	today = datetime.now().date().isoformat()
 	state = _load_state(state_file)
 
 	MSK = timezone(timedelta(hours=3))
+	today = datetime.now(MSK).date().isoformat()
 
 	def _eta_msk_label(seconds: int) -> str:
 		sec = max(int(seconds), 0)
@@ -311,65 +312,78 @@ def notify_if_needed(
 	serpent_sec = monk.get("serpent")
 	print(dragon_sec, serpent_sec)
 
-	EARLY_SLACK_SEC = 10*60
-	LATE_SLACK_SEC  = 13*60
+	thresholds_sorted = sorted(thresholds_sec)
 
 	for beast, sec in (("dragon", dragon_sec), ("serpent", serpent_sec)):
 		if sec is None:
 			continue
-		for thr in thresholds_sec:
-			delta = thr - sec
-			in_early_window = 0 <= delta <= EARLY_SLACK_SEC
-			in_late_window  = -LATE_SLACK_SEC <= delta < 0
-			if not (in_early_window or in_late_window):
-				continue
+		sec = int(sec)
+		if sec <= 0:
+			continue
+		due = [thr for thr in thresholds_sorted if sec <= thr]
+		if not due:
+			continue
 
-			key = f"{beast}_{thr}"
-			if state.get(key) == today:
-				continue
+		thr_to_send = min(due)
+		key = f"{beast}_{thr_to_send}"
+		if state.get(key) == today:
+			continue
 
-			city = "Гранд" if beast == "dragon" else "Норлунг"
-			who  = "дракона" if beast == "dragon" else "змея"
-			msg  = (
-				"Храбрые викинги, внимание!\n"
-				f"Мудрый монах предрекает нападение <b>{who}</b> на <b>{city}</b>\n"
-				f"через {_humanize_time_ru(int(sec))}! {_eta_msk_label(sec)}"
-			)
-			print(msg)
-			resp = tg_send(bot_token, chat_ids, msg, parse_mode="HTML")
-			print(resp)
-			state[key] = today
+		city = "Гранд" if beast == "dragon" else "Норлунг"
+		who  = "дракона" if beast == "dragon" else "змея"
+		msg  = (
+			"Храбрые викинги, внимание!\n"
+			f"Мудрый монах предрекает нападение <b>{who}</b> на <b>{city}</b>\n"
+			f"через {_humanize_time_ru(int(sec))}! {_eta_msk_label(sec)}"
+		)
+		print(msg)
+		resp = tg_send(bot_token, chat_ids, msg, parse_mode="HTML")
+		print(resp)
+
+		for thr in thresholds_sorted:
+			if thr >= thr_to_send:
+				state[f"{beast}_{thr}"] = today
+
 
 	# ВЛАД
 	merc = fetch_and_parse(
-	cookies_path=cookies_path,
-	url_path="/events",
-	parse_fn=merc_lord_block,
-	timeout=timeout,
-)
+		cookies_path=cookies_path,
+		url_path="/events",
+		parse_fn=merc_lord_block,
+		timeout=timeout,
+	)
 
 	if merc.get("when_iso") and state.get("lord") != today:
 
 		lord_dt = datetime.fromisoformat(merc["when_iso"])
+
+		if lord_dt.tzinfo is None:
+			lord_dt = lord_dt.replace(tzinfo=MSK)
+
 		battle_dt = lord_dt + timedelta(hours=1)
-		time_label = battle_dt.strftime("%H:%M")
-		city = merc.get("city")
-		if city:
-			msg = (
-				"Храбрые викинги, внимание!\n"
-				f"К городу <b>{city}</b> приближается Владыка Наемников!\n"
-				f"Готовьтесь к бою в <b>{time_label}</b>!"
-			)
+		now_msk = datetime.now(MSK)
+		sec_left = int((battle_dt - now_msk).total_seconds())
+
+		if sec_left <= 0:
+			state["lord"] = today
 		else:
-			msg = (
-				"Храбрые викинги, внимание!\n"
-				"Приближается Владыка Наемников!\n"
-				f"Готовьтесь к бою в <b>{time_label}</b>!"
-			)
-		print(msg)
-		resp = tg_send(bot_token, chat_ids, msg, parse_mode="HTML")
-		print(resp)
-		state["lord"] = today
+			city = merc.get("city")
+			if city:
+				msg = (
+					"Храбрые викинги, внимание!\n"
+					f"К городу <b>{city}</b> приближается Владыка Наемников!\n"
+					f"Готовьтесь к бою через {_humanize_time_ru(sec_left)}! {_eta_msk_label(sec_left)}"
+				)
+			else:
+				msg = (
+					"Храбрые викинги, внимание!\n"
+					"Приближается Владыка Наемников!\n"
+					f"Готовьтесь к бою через {_humanize_time_ru(sec_left)}! {_eta_msk_label(sec_left)}"
+				)
+			print(msg)
+			resp = tg_send(bot_token, chat_ids, msg, parse_mode="HTML")
+			print(resp)
+			state["lord"] = today
 
 	_save_state(state_file, state)
 

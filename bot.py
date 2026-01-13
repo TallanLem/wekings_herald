@@ -340,9 +340,7 @@ def notify_if_needed(
 		resp = tg_send(bot_token, chat_ids, msg, parse_mode="HTML")
 		print(resp)
 
-		for thr in thresholds_sorted:
-			if thr >= thr_to_send:
-				state[f"{beast}_{thr}"] = today
+		state[f"{beast}_{thr_to_send}"] = today
 
 
 	# ВЛАД
@@ -387,17 +385,40 @@ def notify_if_needed(
 
 	_save_state(state_file, state)
 
+def _run_once() -> None:
+	bot_token = env_get("BOT_TOKEN", "")
+	chat_ids = [x.strip() for x in env_get("CHAT_IDS", "").split(",") if x.strip()]
+	if not bot_token or not chat_ids:
+		print("BOT_TOKEN or CHAT_IDS missing", file=sys.stderr)
+		return
 
-BOT_TOKEN = env_get("BOT_TOKEN", "")
-CHAT_IDS = [x.strip() for x in env_get("CHAT_IDS", "").split(",") if x.strip()]
-#~ print(CHAT_IDS)
-#~ print(requests.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates").json())
+	notify_if_needed(
+		cookies_path=env_get("COOKIES_FILE", "herald_playwekings.ru.json"),
+		bot_token=bot_token,
+		chat_ids=chat_ids,
+		thresholds_sec=[90*60, 40*60, 10*60],
+		window_sec=5*60,
+		state_file=env_get("STATE_FILE", "notify_state.json"),
+	)
 
-notify_if_needed(
-	cookies_path=env_get("COOKIES_FILE", "herald_playwekings.ru.json"),
-	bot_token=BOT_TOKEN,
-	chat_ids=CHAT_IDS,
-	thresholds_sec=[90*60, 40*60, 10*60],
-	window_sec=5*60,
-	state_file=env_get("STATE_FILE", "notify_state.json"),
-)
+def main() -> None:
+	loop_seconds = int(env_get("LOOP_SECONDS", "0") or "0")
+	tick_seconds = int(env_get("TICK_SECONDS", "60") or "60")
+	if loop_seconds <= 0:
+		_run_once()
+		return
+
+	end_ts = time.time() + loop_seconds
+	while True:
+		try:
+			_run_once()
+		except Exception as e:
+			print(f"ERROR: {e}", file=sys.stderr)
+
+		remaining = end_ts - time.time()
+		if remaining <= 0:
+			break
+		time.sleep(min(tick_seconds, max(1, int(remaining))))
+
+if __name__ == "__main__":
+	main()

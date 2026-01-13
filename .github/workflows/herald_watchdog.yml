@@ -1,0 +1,35 @@
+name: Herald Watchdog
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+permissions:
+  actions: write
+
+concurrency:
+  group: herald-watchdog
+  cancel-in-progress: true
+
+jobs:
+  ensure-chain-running:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check chain workflow status
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          inprog=$(curl -s             -H "Accept: application/vnd.github+json"             -H "Authorization: Bearer $GH_TOKEN"             "https://api.github.com/repos/${{ github.repository }}/actions/workflows/herald.yml/runs?status=in_progress&per_page=1" | jq -r '.total_count')
+          queued=$(curl -s             -H "Accept: application/vnd.github+json"             -H "Authorization: Bearer $GH_TOKEN"             "https://api.github.com/repos/${{ github.repository }}/actions/workflows/herald.yml/runs?status=queued&per_page=1" | jq -r '.total_count')
+
+          echo "inprog=$inprog" >> "$GITHUB_OUTPUT"
+          echo "queued=$queued" >> "$GITHUB_OUTPUT"
+
+      - name: Dispatch chain workflow if not running
+        if: steps.check.outputs.inprog == '0' && steps.check.outputs.queued == '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl -s -X POST             -H "Accept: application/vnd.github+json"             -H "Authorization: Bearer $GH_TOKEN"             "https://api.github.com/repos/${{ github.repository }}/actions/workflows/herald.yml/dispatches"             -d "{"ref":"${GITHUB_REF_NAME}"}"

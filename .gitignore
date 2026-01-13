@@ -1,3 +1,4 @@
 .env
 notify_state.json
 herald_playwekings.ru.json
+bot_old.py

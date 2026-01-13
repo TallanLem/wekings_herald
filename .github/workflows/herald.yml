@@ -1,12 +1,11 @@
-name: Herald
+name: Herald (Chain)
 
 on:
-  schedule:
-    - cron: '*/10 * * * *'
   workflow_dispatch:
 
 permissions:
   contents: write
+  actions: write
 
 concurrency:
   group: herald-bot
@@ -15,13 +14,13 @@ concurrency:
 jobs:
   run-herald:
     runs-on: ubuntu-latest
+    timeout-minutes: 180
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -43,12 +42,14 @@ jobs:
           ${{ secrets.COOKIES_JSON }}
           EOF
 
-      - name: Run Herald bot
+      - name: Run Herald bot (2h loop)
         env:
           BOT_TOKEN:    ${{ secrets.BOT_TOKEN }}
           CHAT_IDS:     ${{ secrets.CHAT_IDS }}
           COOKIES_FILE: herald_playwekings.ru.json
           STATE_FILE:   notify_state.json
+          LOOP_SECONDS: "7200"
+          TICK_SECONDS: "60"
         run: |
           python bot.py
 
@@ -58,7 +59,7 @@ jobs:
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-            git pull --rebase origin "$(git rev-parse --abbrev-ref HEAD)" || true
+            git pull --rebase origin "${GITHUB_REF_NAME}" || true
 
             git add notify_state.json
             git commit -m "Update notify_state.json [skip ci]"
@@ -66,3 +67,10 @@ jobs:
           else
             echo "No changes in notify_state.json"
           fi
+
+      - name: Continue chain
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          curl -s -X POST             -H "Accept: application/vnd.github+json"             -H "Authorization: Bearer $GH_TOKEN"             "https://api.github.com/repos/${{ github.repository }}/actions/workflows/herald.yml/dispatches"             -d "{"ref":"${GITHUB_REF_NAME}"}"

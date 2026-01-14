@@ -73,4 +73,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          curl -s -X POST             -H "Accept: application/vnd.github+json"             -H "Authorization: Bearer $GH_TOKEN"             "https://api.github.com/repos/${{ github.repository }}/actions/workflows/herald.yml/dispatches"             -d "{"ref":"${GITHUB_REF_NAME}"}"
+          ref="${GITHUB_REF_NAME:-main}"
+          payload=$(printf '{"ref":"%s"}' "$ref")
+
+          curl -sS -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Content-Type: application/json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/herald.yml/dispatches" \
+            -d "$payload"

@@ -142,8 +142,6 @@ def fetch_and_parse(
 
 def monastic_block(
 	html: str,
-	thresholds_sec: list[int],
-	window_sec: int,
 	city_dragon: str = "Гранд",
 	city_serpent: str = "Норлунг",
 ) -> dict:
@@ -295,22 +293,26 @@ def notify_if_needed(
 	MSK = timezone(timedelta(hours=3))
 	today = datetime.now(MSK).date().isoformat()
 
-	def _eta_msk_label(seconds: int) -> str:
-		sec = max(int(seconds), 0)
-		now_msk = datetime.now(MSK)
-		eta = now_msk + timedelta(seconds=sec)
+	def _round_to_minute(dt: datetime) -> datetime:
+		# округляем до минуты, чтобы не дрожало на ±1 мин
+		return (dt + timedelta(seconds=30)).replace(second=0, microsecond=0)
+
+	def _eta_label_dt(eta: datetime, now_msk: datetime) -> str:
 		return f"(в {eta:%H:%M})" if eta.date() == now_msk.date() else f"(в {eta:%H:%M %d.%m})"
+
 
 	# МОНАХ
 	monk = fetch_and_parse(
 		cookies_path=cookies_path,
 		url_path="/monastic",
-		parse_fn=lambda html: monastic_block(html, thresholds_sec, window_sec),
+		parse_fn=monastic_block,
 		timeout=timeout,
 	)
+
 	dragon_sec = monk.get("dragon")
 	serpent_sec = monk.get("serpent")
 	print(dragon_sec, serpent_sec)
+	now_msk = datetime.now(MSK)
 
 	thresholds_sorted = sorted(thresholds_sec)
 
@@ -320,7 +322,40 @@ def notify_if_needed(
 		sec = int(sec)
 		if sec <= 0:
 			continue
-		due = [thr for thr in thresholds_sorted if sec <= thr]
+
+		# 1) вычисляем "предполагаемое" время прилёта и округляем до минуты
+		proposed_event_dt = _round_to_minute(now_msk + timedelta(seconds=sec))
+
+		# 2) достаём/фиксируем время прилёта на сегодня
+		event_day_key = f"{beast}_event_day"
+		event_iso_key = f"{beast}_event_iso"
+
+		event_dt: datetime | None = None
+		if state.get(event_day_key) == today and state.get(event_iso_key):
+			try:
+				event_dt = datetime.fromisoformat(state[event_iso_key])
+				if event_dt.tzinfo is None:
+					event_dt = event_dt.replace(tzinfo=MSK)
+			except Exception:
+				event_dt = None
+
+		# если на сегодня не было — фиксируем; если было, но разъехалось сильно — обновляем
+		if event_dt is None:
+			event_dt = proposed_event_dt
+			state[event_day_key] = today
+			state[event_iso_key] = event_dt.isoformat(timespec="seconds")
+		else:
+			if abs(int((event_dt - proposed_event_dt).total_seconds())) >= 120:
+				event_dt = proposed_event_dt
+				state[event_day_key] = today
+				state[event_iso_key] = event_dt.isoformat(timespec="seconds")
+
+		# 3) считаем оставшееся время уже от фиксированного event_dt
+		sec_left = int((event_dt - now_msk).total_seconds())
+		if sec_left <= 0:
+			continue
+
+		due = [thr for thr in thresholds_sorted if sec_left <= thr]
 		if not due:
 			continue
 
@@ -334,8 +369,10 @@ def notify_if_needed(
 		msg  = (
 			"Храбрые викинги, внимание!\n"
 			f"Мудрый монах предрекает нападение <b>{who}</b> на <b>{city}</b>\n"
-			f"через {_humanize_time_ru(int(sec))}! {_eta_msk_label(sec)}"
+			f"через {_humanize_time_ru(sec_left)}! {_eta_label_dt(event_dt, now_msk)}"
 		)
+
+
 		print(msg)
 		resp = tg_send(bot_token, chat_ids, msg, parse_mode="HTML")
 		print(resp)
@@ -370,13 +407,14 @@ def notify_if_needed(
 				msg = (
 					"Храбрые викинги, внимание!\n"
 					f"К городу <b>{city}</b> приближается Владыка Наемников!\n"
-					f"Готовьтесь к бою через {_humanize_time_ru(sec_left)}! {_eta_msk_label(sec_left)}"
+					f"Готовьтесь к бою через {_humanize_time_ru(sec_left)}! {_eta_label_dt(battle_dt, now_msk)}"
+
 				)
 			else:
 				msg = (
 					"Храбрые викинги, внимание!\n"
 					"Приближается Владыка Наемников!\n"
-					f"Готовьтесь к бою через {_humanize_time_ru(sec_left)}! {_eta_msk_label(sec_left)}"
+					f"Готовьтесь к бою через {_humanize_time_ru(sec_left)}! {_eta_label_dt(battle_dt, now_msk)}"
 				)
 			print(msg)
 			resp = tg_send(bot_token, chat_ids, msg, parse_mode="HTML")
@@ -396,7 +434,7 @@ def _run_once() -> None:
 		cookies_path=env_get("COOKIES_FILE", "herald_playwekings.ru.json"),
 		bot_token=bot_token,
 		chat_ids=chat_ids,
-		thresholds_sec=[90*60, 40*60, 10*60],
+		thresholds_sec=[91*60, 46*60, 16*60],
 		window_sec=5*60,
 		state_file=env_get("STATE_FILE", "notify_state.json"),
 	)

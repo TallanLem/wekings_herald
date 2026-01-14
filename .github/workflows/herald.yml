@@ -14,7 +14,7 @@ concurrency:
 jobs:
   run-herald:
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 355
 
     steps:
       - name: Checkout repository
@@ -48,7 +48,7 @@ jobs:
           CHAT_IDS:     ${{ secrets.CHAT_IDS }}
           COOKIES_FILE: herald_playwekings.ru.json
           STATE_FILE:   notify_state.json
-          LOOP_SECONDS: "7200"
+          LOOP_SECONDS: "21000"
           TICK_SECONDS: "60"
         run: |
           python bot.py

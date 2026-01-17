@@ -365,14 +365,10 @@ def notify_if_needed(
 			continue
 
 		city = "Гранд" if beast == "dragon" else "Норлунг"
-		who  = "дракона" if beast == "dragon" else "змея"
-		msg  = (
-			"Храбрые викинги, внимание!\n"
-			f"Мудрый монах предрекает нападение <b>{who}</b> на <b>{city}</b>\n"
-			f"через {_humanize_time_ru(sec_left)}! {_eta_label_dt(event_dt, now_msk)}"
-		)
+		who  = "Дракон" if beast == "dragon" else "Змей"
+		dot = "🔴" if beast == "dragon" else "🟢"
 
-
+		msg = f"{dot} {who} через {_humanize_time_ru(sec_left)}! {_eta_label_dt(event_dt, now_msk)}"
 		print(msg)
 		resp = tg_send(bot_token, chat_ids, msg, parse_mode="HTML")
 		print(resp)
@@ -403,19 +399,8 @@ def notify_if_needed(
 			state["lord"] = today
 		else:
 			city = merc.get("city")
-			if city:
-				msg = (
-					"Храбрые викинги, внимание!\n"
-					f"К городу <b>{city}</b> приближается Владыка Наемников!\n"
-					f"Готовьтесь к бою через {_humanize_time_ru(sec_left)}! {_eta_label_dt(battle_dt, now_msk)}"
-
-				)
-			else:
-				msg = (
-					"Храбрые викинги, внимание!\n"
-					"Приближается Владыка Наемников!\n"
-					f"Готовьтесь к бою через {_humanize_time_ru(sec_left)}! {_eta_label_dt(battle_dt, now_msk)}"
-				)
+			loc = "" if not city else (" в Гранде" if city == "Гранд" else (" в Норлунге" if city == "Норлунг" else f" в {city}"))
+			msg = f"🔵 Владыка Наемников будет{loc} через {_humanize_time_ru(sec_left)}! {_eta_label_dt(battle_dt, now_msk)}"
 			print(msg)
 			resp = tg_send(bot_token, chat_ids, msg, parse_mode="HTML")
 			print(resp)

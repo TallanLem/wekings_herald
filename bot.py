@@ -200,6 +200,9 @@ def merc_lord_block(html: str) -> dict:
 		mcity = city_re.search(body_text)
 		city = normalize_city(mcity.group("city")) if mcity else None
 
+		if city is None:
+			continue
+
 		candidates.append((dt, city, when_str))
 
 	if not candidates:

@@ -57,9 +57,13 @@ def _load_state(path: Union[str, Path]) -> dict:
 		return {}
 
 def _save_state(path: Union[str, Path], data: dict) -> None:
-	with Path(path).open('w', encoding='utf-8') as f:
+	p = Path(path)
+	tmp = p.with_suffix(p.suffix + ".tmp")
+	with tmp.open('w', encoding='utf-8') as f:
 		json.dump(data, f, ensure_ascii=False, indent=2)
-
+		f.flush()
+		os.fsync(f.fileno())
+	tmp.replace(p)
 
 
 def load_cookies_for_domain(
@@ -297,119 +301,117 @@ def notify_if_needed(
 	today = datetime.now(MSK).date().isoformat()
 
 	def _round_to_minute(dt: datetime) -> datetime:
-		# округляем до минуты, чтобы не дрожало на ±1 мин
-		return (dt + timedelta(seconds=30)).replace(second=0, microsecond=0)
+		return dt.replace(second=0, microsecond=0)
 
 	def _eta_label_dt(eta: datetime, now_msk: datetime) -> str:
 		return f"(в {eta:%H:%M})" if eta.date() == now_msk.date() else f"(в {eta:%H:%M %d.%m})"
 
+	try:
+		# МОНАХ
+		monk = fetch_and_parse(
+			cookies_path=cookies_path,
+			url_path="/monastic",
+			parse_fn=monastic_block,
+			timeout=timeout,
+		)
 
-	# МОНАХ
-	monk = fetch_and_parse(
-		cookies_path=cookies_path,
-		url_path="/monastic",
-		parse_fn=monastic_block,
-		timeout=timeout,
-	)
+		dragon_sec = monk.get("dragon")
+		serpent_sec = monk.get("serpent")
+		print(dragon_sec, serpent_sec)
+		now_msk = datetime.now(MSK)
 
-	dragon_sec = monk.get("dragon")
-	serpent_sec = monk.get("serpent")
-	print(dragon_sec, serpent_sec)
-	now_msk = datetime.now(MSK)
+		thresholds_sorted = sorted(thresholds_sec)
 
-	thresholds_sorted = sorted(thresholds_sec)
+		for beast, sec in (("dragon", dragon_sec), ("serpent", serpent_sec)):
+			if sec is None:
+				continue
+			sec = int(sec)
+			if sec <= 0:
+				continue
 
-	for beast, sec in (("dragon", dragon_sec), ("serpent", serpent_sec)):
-		if sec is None:
-			continue
-		sec = int(sec)
-		if sec <= 0:
-			continue
+			# 1) вычисляем "предполагаемое" время прилёта и округляем до минуты
+			proposed_event_dt = _round_to_minute(now_msk + timedelta(seconds=sec))
 
-		# 1) вычисляем "предполагаемое" время прилёта и округляем до минуты
-		proposed_event_dt = _round_to_minute(now_msk + timedelta(seconds=sec))
+			# 2) достаём/фиксируем время прилёта на сегодня
+			event_day_key = f"{beast}_event_day"
+			event_iso_key = f"{beast}_event_iso"
 
-		# 2) достаём/фиксируем время прилёта на сегодня
-		event_day_key = f"{beast}_event_day"
-		event_iso_key = f"{beast}_event_iso"
+			event_dt: datetime | None = None
+			if state.get(event_day_key) == today and state.get(event_iso_key):
+				try:
+					event_dt = datetime.fromisoformat(state[event_iso_key])
+					if event_dt.tzinfo is None:
+						event_dt = event_dt.replace(tzinfo=MSK)
+				except Exception:
+					event_dt = None
 
-		event_dt: datetime | None = None
-		if state.get(event_day_key) == today and state.get(event_iso_key):
-			try:
-				event_dt = datetime.fromisoformat(state[event_iso_key])
-				if event_dt.tzinfo is None:
-					event_dt = event_dt.replace(tzinfo=MSK)
-			except Exception:
-				event_dt = None
-
-		# если на сегодня не было — фиксируем; если было, но разъехалось сильно — обновляем
-		if event_dt is None:
-			event_dt = proposed_event_dt
-			state[event_day_key] = today
-			state[event_iso_key] = event_dt.isoformat(timespec="seconds")
-		else:
-			if abs(int((event_dt - proposed_event_dt).total_seconds())) >= 120:
+			# если на сегодня не было — фиксируем; если было, но разъехалось сильно — обновляем
+			if event_dt is None:
 				event_dt = proposed_event_dt
 				state[event_day_key] = today
 				state[event_iso_key] = event_dt.isoformat(timespec="seconds")
+			else:
+				if abs(int((event_dt - proposed_event_dt).total_seconds())) >= 120:
+					event_dt = proposed_event_dt
+					state[event_day_key] = today
+					state[event_iso_key] = event_dt.isoformat(timespec="seconds")
 
-		# 3) считаем оставшееся время уже от фиксированного event_dt
-		sec_left = int((event_dt - now_msk).total_seconds())
-		if sec_left <= 0:
-			continue
+			# 3) считаем оставшееся время уже от фиксированного event_dt
+			sec_left = int((event_dt - now_msk).total_seconds())
+			if sec_left <= 0:
+				continue
 
-		due = [thr for thr in thresholds_sorted if sec_left <= thr]
-		if not due:
-			continue
+			due = [thr for thr in thresholds_sorted if sec_left <= thr]
+			if not due:
+				continue
 
-		thr_to_send = min(due)
-		key = f"{beast}_{thr_to_send}"
-		if state.get(key) == today:
-			continue
+			thr_to_send = min(due)
+			key = f"{beast}_{thr_to_send}"
+			if state.get(key) == today:
+				continue
 
-		city = "Гранд" if beast == "dragon" else "Норлунг"
-		who  = "Дракон" if beast == "dragon" else "Змей"
-		dot = "🔴" if beast == "dragon" else "🟢"
+			city = "Гранд" if beast == "dragon" else "Норлунг"
+			who  = "Дракон" if beast == "dragon" else "Змей"
+			dot = "🔴" if beast == "dragon" else "🟢"
 
-		msg = f"{dot} {who} через {_humanize_time_ru(sec_left)}! {_eta_label_dt(event_dt, now_msk)}"
-		print(msg)
-		resp = tg_send(bot_token, chat_ids, msg, parse_mode="HTML")
-		print(resp)
-
-		state[f"{beast}_{thr_to_send}"] = today
-
-
-	# ВЛАД
-	merc = fetch_and_parse(
-		cookies_path=cookies_path,
-		url_path="/events",
-		parse_fn=merc_lord_block,
-		timeout=timeout,
-	)
-
-	if merc.get("when_iso") and state.get("lord") != today:
-
-		lord_dt = datetime.fromisoformat(merc["when_iso"])
-
-		if lord_dt.tzinfo is None:
-			lord_dt = lord_dt.replace(tzinfo=MSK)
-
-		battle_dt = lord_dt + timedelta(hours=1)
-		now_msk = datetime.now(MSK)
-		sec_left = int((battle_dt - now_msk).total_seconds())
-
-		if sec_left <= 0:
-			state["lord"] = today
-		else:
-			city = merc.get("city")
-			loc = "" if not city else (" в Гранде" if city == "Гранд" else (" в Норлунге" if city == "Норлунг" else f" в {city}"))
-			msg = f"🔵 Владыка Наемников будет{loc} через {_humanize_time_ru(sec_left)}! {_eta_label_dt(battle_dt, now_msk)}"
+			msg = f"{dot} {who} через {_humanize_time_ru(sec_left)}! {_eta_label_dt(event_dt, now_msk)}"
 			print(msg)
 			resp = tg_send(bot_token, chat_ids, msg, parse_mode="HTML")
 			print(resp)
-			state["lord"] = today
 
-	_save_state(state_file, state)
+			state[f"{beast}_{thr_to_send}"] = today
+
+		# ВЛАД
+		merc = fetch_and_parse(
+			cookies_path=cookies_path,
+			url_path="/events",
+			parse_fn=merc_lord_block,
+			timeout=timeout,
+		)
+
+		if merc.get("when_iso") and state.get("lord") != today:
+
+			lord_dt = datetime.fromisoformat(merc["when_iso"])
+
+			if lord_dt.tzinfo is None:
+				lord_dt = lord_dt.replace(tzinfo=MSK)
+
+			battle_dt = lord_dt + timedelta(hours=1)
+			now_msk = datetime.now(MSK)
+			sec_left = int((battle_dt - now_msk).total_seconds())
+
+			if sec_left <= 0:
+				state["lord"] = today
+			else:
+				city = merc.get("city")
+				loc = "" if not city else (" в Гранде" if city == "Гранд" else (" в Норлунге" if city == "Норлунг" else f" в {city}"))
+				msg = f"🔵 Владыка Наемников будет{loc} через {_humanize_time_ru(sec_left)}! {_eta_label_dt(battle_dt, now_msk)}"
+				print(msg)
+				resp = tg_send(bot_token, chat_ids, msg, parse_mode="HTML")
+				print(resp)
+				state["lord"] = today
+	finally:
+		_save_state(state_file, state)
 
 def _run_once() -> None:
 	bot_token = env_get("BOT_TOKEN", "")

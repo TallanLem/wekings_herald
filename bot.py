@@ -457,6 +457,7 @@ def notify_if_needed(
 				url_path="/monastic",
 				parse_fn=monastic_block,
 				timeout=timeout,
+				preferred_domain=state.get("active_domain"),
 			)
 			if monk.get("dragon") is None and monk.get("serpent") is None:
 				raise GameUnavailableError("No boss timers found on /monastic")
@@ -464,6 +465,7 @@ def notify_if_needed(
 			_report_access_failure(state, error, bot_token, chat_ids)
 			raise
 		else:
+			state["active_domain"] = monk["domain"]
 			if state.pop("access_alert", None) is not None:
 				print("Game access restored; outage alert reset")
 

@@ -20,6 +20,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
+          ref: main
           fetch-depth: 0
 
       - name: Set up Python
@@ -57,23 +58,38 @@ jobs:
           deadline=$((SECONDS + 21000))
           last_failed=0
           while true; do
-            if python bot.py; then
-              last_failed=0
-            else
+            # Refresh the published state before every poll. Never send a message
+            # against an outdated checkout, including immediately after a restart.
+            # If a previous state commit could not be pushed, publish it first.
+            if ! git fetch origin "${GITHUB_REF_NAME}"; then
+              echo "::error::Could not fetch current notification state; skipping poll."
               last_failed=1
-              echo "::error::Herald poll failed; state is still being saved."
-            fi
-
-            if [[ -n "$(git status --porcelain notify_state.json)" ]]; then
-              git add notify_state.json
-              git commit -m "Update notify_state.json [skip ci]"
-            fi
-
-            # Retry pending commits even when the state file did not change again.
-            if [[ "$(git rev-list --count "origin/${GITHUB_REF_NAME}..HEAD")" -gt 0 ]]; then
-              if ! git push; then
-                echo "::warning::Failed to push notify_state.json; will retry on next poll."
+            elif ! git rebase "origin/${GITHUB_REF_NAME}"; then
+              git rebase --abort || true
+              echo "::error::Could not reconcile notification state; stopping to prevent duplicates."
+              exit 1
+            elif [[ "$(git rev-list --count "origin/${GITHUB_REF_NAME}..HEAD")" -gt 0 ]] &&
+                 ! git push origin "HEAD:${GITHUB_REF_NAME}"; then
+              echo "::error::Pending notification state was not published; skipping poll."
+              last_failed=1
+            else
+              if python bot.py; then
+                last_failed=0
+              else
                 last_failed=1
+                echo "::error::Herald poll failed; notification state will still be saved."
+              fi
+
+              if [[ -n "$(git status --porcelain notify_state.json)" ]]; then
+                git add notify_state.json
+                git commit -m "Update notify_state.json [skip ci]"
+              fi
+
+              if [[ "$(git rev-list --count "origin/${GITHUB_REF_NAME}..HEAD")" -gt 0 ]]; then
+                if ! git push origin "HEAD:${GITHUB_REF_NAME}"; then
+                  echo "::error::Notification state push failed; no new poll before retry."
+                  last_failed=1
+                fi
               fi
             fi
 
@@ -83,7 +99,7 @@ jobs:
             sleep 60
           done
           if (( last_failed != 0 )); then
-            echo "::error::The final Herald poll or state push failed."
+            echo "::error::The final Herald poll or state synchronization failed."
             exit 1
           fi
 

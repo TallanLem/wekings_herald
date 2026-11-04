@@ -295,6 +295,56 @@ def merc_lord_block(html: str) -> dict:
 	}
 
 
+def swimming_weather_block(
+    html: str, now_msk: Optional[datetime] = None
+) -> list[dict[str, str]]:
+    """Find today's active good-weather notices, independently of Lord events."""
+    MSK = timezone(timedelta(hours=3))
+    now_msk = datetime.now(MSK) if now_msk is None else now_msk.astimezone(MSK)
+    card_re = re.compile(
+        r'<span[^>]*class="[^"]*event-header[^"]*"[^>]*>\s*Плавание\s*</span>'
+        r'.{0,500}?<span[^>]*class="[^"]*text-xs[^"]*"[^>]*>\s*'
+        r'(?P<posted>\d{1,2}:\d{2}\s+\d{2}\.\d{2}\.\d{2})\s*</span>'
+        r'.{0,500}?<p[^>]*class="[^"]*text-sm[^"]*"[^>]*>\s*'
+        r'(?P<body>.*?)\s*</p>',
+        re.IGNORECASE | re.DOTALL,
+    )
+    weather_re = re.compile(
+        r'Хорошая\s+погода\s+для\s+плавания\s+до\s*'
+        r'(?P<until>\d{1,2}:\d{2}\s+\d{2}\.\d{2}\.\d{2})\s*!',
+        re.IGNORECASE,
+    )
+    found: dict[str, dict[str, str]] = {}
+    for card in card_re.finditer(html):
+        text = re.sub(r'\s+', ' ', re.sub(r'<[^>]+>', ' ', card.group('body'))).strip()
+        weather = weather_re.search(text)
+        if weather is None:
+            continue
+        try:
+            posted = datetime.strptime(card.group('posted'), '%H:%M %d.%m.%y').replace(tzinfo=MSK)
+            until = datetime.strptime(weather.group('until'), '%H:%M %d.%m.%y').replace(tzinfo=MSK)
+        except ValueError:
+            continue
+
+        # Use the event's publication date, NOT the weather's expiration date.
+        if posted.date() != now_msk.date() or posted > now_msk or until <= now_msk:
+            continue
+        event_id = f'{posted:%Y%m%d_%H%M}_{until:%Y%m%d_%H%M}'
+        found[event_id] = {
+            "id": event_id,
+            "day": posted.date().isoformat(),
+            "message": f'Хорошая погода для плавания до {until:%H:%M %d.%m.%y}!',
+        }
+    return list(found.values())
+
+
+def events_block(html: str) -> dict:
+    """Parse independent Lord and swimming events from the same /events response."""
+    result = merc_lord_block(html)
+    result["swimming_weather"] = swimming_weather_block(html)
+    return result
+
+
 def _tg_post(method: str, token: str, payload: dict, timeout: int = 20) -> dict:
 	url = f"https://api.telegram.org/bot{token}/{method}"
 	retries = 3
@@ -538,7 +588,7 @@ def notify_if_needed(
 		merc = fetch_and_parse(
 			cookies_path=cookies_path,
 			url_path="/events",
-			parse_fn=merc_lord_block,
+			parse_fn=events_block,
 			timeout=timeout,
 			preferred_domain=monk["domain"],
 		)
@@ -563,6 +613,17 @@ def notify_if_needed(
 				print(msg)
 				if not _send_notification_once(state, "lord", today, bot_token, chat_ids, msg):
 					delivery_failed = True
+
+		# ПЛАВАНИЕ: an independent event, sent once for the publication date.
+		for weather in merc.get("swimming_weather", []):
+			key = f'swim_weather_{weather["id"]}'
+			if state.get(key) == weather["day"]:
+				continue
+			print(weather["message"])
+			if not _send_notification_once(
+				state, key, weather["day"], bot_token, chat_ids, weather["message"]
+			):
+				delivery_failed = True
 
 		if delivery_failed:
 			raise RuntimeError("Telegram rejected one or more notifications")

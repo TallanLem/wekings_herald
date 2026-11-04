@@ -333,7 +333,7 @@ def swimming_weather_block(
         found[event_id] = {
             "id": event_id,
             "day": posted.date().isoformat(),
-            "message": f'Хорошая погода для плавания до {until:%H:%M %d.%m.%y}!',
+            "message": f'⚓ Хорошая погода для плавания до {until:%H:%M %d.%m.%y}!',
         }
     return list(found.values())
 
@@ -445,9 +445,9 @@ def _report_access_failure(
         return
 
     message = (
-        "Нет доступа к персонажу"
+        "⚠️ Нет доступа к персонажу"
         if isinstance(error, CharacterUnavailableError)
-        else "Нет доступа к игре"
+        else "⚠️ Нет доступа к игре"
     )
 
     try:

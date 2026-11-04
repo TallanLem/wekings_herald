@@ -272,6 +272,85 @@ def tg_send(
 	return results
 
 
+def _send_notification_once(
+    state: dict,
+    key: str,
+    day: str,
+    bot_token: str,
+    chat_ids: list[Union[str, int]],
+    message: str,
+) -> bool:
+    """Record successful recipients and retry only undelivered ones."""
+    if state.get(key) == day:
+        return True
+    pending = state.setdefault("_pending_notifications", {})
+    record = pending.get(key)
+    if not isinstance(record, dict) or record.get("day") != day:
+        record = {"day": day, "sent_to": []}
+        pending[key] = record
+    delivered = set(map(str, record.get("sent_to", [])))
+    for response in tg_send(
+        bot_token, [cid for cid in chat_ids if str(cid) not in delivered],
+        message, parse_mode="HTML"
+    ):
+        cid = str(response["chat_id"])
+        if response.get("ok") is True:
+            delivered.add(cid)
+        else:
+            print(
+                f"TELEGRAM ERROR chat={cid}: {response.get('description', 'request failed')}",
+                file=sys.stderr
+            )
+    record["sent_to"] = sorted(delivered)
+    if all(str(cid) in delivered for cid in chat_ids):
+        state[key] = day
+        pending.pop(key, None)
+        if not pending:
+            state.pop("_pending_notifications", None)
+        return True
+    return False
+
+
+def _report_access_failure(
+    state: dict, error: Exception, bot_token: str,
+    chat_ids: list[Union[str, int]]
+) -> None:
+    """Only one alert per chat until the game becomes readable again."""
+    record = state.get("access_alert")
+    if not isinstance(record, dict):
+        record = {"sent_to": []}
+        state["access_alert"] = record
+    delivered = set(map(str, record.get("sent_to", [])))
+    recipients = [cid for cid in chat_ids if str(cid) not in delivered]
+    if not recipients:
+        return
+
+    if "Неавторизован" in str(error) or (
+        isinstance(error, requests.exceptions.HTTPError)
+        and error.response is not None
+        and error.response.status_code in (401, 403)
+    ):
+        message = "⚠️ Глашатай: не смог войти в игру. Персонаж вылетел — обнови cookies."
+    elif isinstance(error, requests.exceptions.RequestException):
+        message = "⚠️ Глашатай: не смог войти в игру, нет доступа к серверу."
+    else:
+        message = "⚠️ Глашатай: не удалось прочитать таймеры боссов. Проверь вход в игру."
+
+    try:
+        for response in tg_send(bot_token, recipients, message):
+            cid = str(response["chat_id"])
+            if response.get("ok") is True:
+                delivered.add(cid)
+            else:
+                print(
+                    f"TELEGRAM ALERT ERROR chat={cid}: {response.get('description', 'request failed')}",
+                    file=sys.stderr
+                )
+    except Exception as send_error:
+        print(f"TELEGRAM ALERT ERROR: {type(send_error).__name__}", file=sys.stderr)
+    record["sent_to"] = sorted(delivered)
+
+
 def _humanize_time_ru(sec: int) -> str:
 	if sec < 60:
 		return f"{sec} с"
@@ -307,14 +386,24 @@ def notify_if_needed(
 		return f"(в {eta:%H:%M})" if eta.date() == now_msk.date() else f"(в {eta:%H:%M %d.%m})"
 
 	try:
-		# МОНАХ
-		monk = fetch_and_parse(
-			cookies_path=cookies_path,
-			url_path="/monastic",
-			parse_fn=monastic_block,
-			timeout=timeout,
-		)
+		# МОНАХ: report the first failure and reset only after a valid read.
+		try:
+			monk = fetch_and_parse(
+				cookies_path=cookies_path,
+				url_path="/monastic",
+				parse_fn=monastic_block,
+				timeout=timeout,
+			)
+			if monk.get("dragon") is None and monk.get("serpent") is None:
+				raise RuntimeError("No boss timers found on /monastic")
+		except Exception as error:
+			_report_access_failure(state, error, bot_token, chat_ids)
+			raise
+		else:
+			if state.pop("access_alert", None) is not None:
+				print("Game access restored; outage alert reset")
 
+		delivery_failed = False
 		dragon_sec = monk.get("dragon")
 		serpent_sec = monk.get("serpent")
 		print(dragon_sec, serpent_sec)
@@ -376,10 +465,8 @@ def notify_if_needed(
 
 			msg = f"{dot} {who} через {_humanize_time_ru(sec_left)}! {_eta_label_dt(event_dt, now_msk)}"
 			print(msg)
-			resp = tg_send(bot_token, chat_ids, msg, parse_mode="HTML")
-			print(resp)
-
-			state[f"{beast}_{thr_to_send}"] = today
+			if not _send_notification_once(state, key, today, bot_token, chat_ids, msg):
+				delivery_failed = True
 
 		# ВЛАД
 		merc = fetch_and_parse(
@@ -407,9 +494,11 @@ def notify_if_needed(
 				loc = "" if not city else (" в Гранде" if city == "Гранд" else (" в Норлунге" if city == "Норлунг" else f" в {city}"))
 				msg = f"🔵 Владыка Наемников будет{loc} через {_humanize_time_ru(sec_left)}! {_eta_label_dt(battle_dt, now_msk)}"
 				print(msg)
-				resp = tg_send(bot_token, chat_ids, msg, parse_mode="HTML")
-				print(resp)
-				state["lord"] = today
+				if not _send_notification_once(state, "lord", today, bot_token, chat_ids, msg):
+					delivery_failed = True
+
+		if delivery_failed:
+			raise RuntimeError("Telegram rejected one or more notifications")
 	finally:
 		_save_state(state_file, state)
 
@@ -417,8 +506,7 @@ def _run_once() -> None:
 	bot_token = env_get("BOT_TOKEN", "")
 	chat_ids = [x.strip() for x in env_get("CHAT_IDS", "").split(",") if x.strip()]
 	if not bot_token or not chat_ids:
-		print("BOT_TOKEN or CHAT_IDS missing", file=sys.stderr)
-		return
+		raise RuntimeError("BOT_TOKEN or CHAT_IDS missing")
 
 	notify_if_needed(
 		cookies_path=env_get("COOKIES_FILE", "herald_playwekings.ru.json"),
@@ -437,16 +525,20 @@ def main() -> None:
 		return
 
 	end_ts = time.time() + loop_seconds
+	last_failed = False
 	while True:
 		try:
 			_run_once()
+			last_failed = False
 		except Exception as e:
+			last_failed = True
 			print(f"ERROR: {e}", file=sys.stderr)
-
 		remaining = end_ts - time.time()
 		if remaining <= 0:
 			break
 		time.sleep(min(tick_seconds, max(1, int(remaining))))
+	if last_failed:
+		raise RuntimeError("Herald's last poll failed")
 
 if __name__ == "__main__":
 	main()

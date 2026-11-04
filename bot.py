@@ -66,82 +66,151 @@ def _save_state(path: Union[str, Path], data: dict) -> None:
 	tmp.replace(p)
 
 
+class GameUnavailableError(RuntimeError):
+    """The game endpoint cannot be reached or its boss data cannot be read."""
+
+
+class CharacterUnavailableError(RuntimeError):
+    """The game replied with an explicit authentication requirement."""
+
+
+def _load_cookie_bundles(path: Union[str, Path]) -> list[tuple[str, list[dict]]]:
+    """Accept one JSON array or {"cookies": [...]} with multiple domains."""
+    with Path(path).open("r", encoding="utf-8") as source:
+        cookies = json.load(source)
+    if isinstance(cookies, dict) and "cookies" in cookies:
+        cookies = cookies["cookies"]
+    if not isinstance(cookies, list):
+        raise ValueError("Cookies must be a JSON array or an object with a 'cookies' array")
+
+    domains: dict[str, list[dict]] = {}
+    for cookie in cookies:
+        if not isinstance(cookie, dict):
+            continue
+        domain = str(cookie.get("domain") or "").strip().lstrip(".").lower()
+        if not re.fullmatch(r"[a-z0-9-]+(?:\.[a-z0-9-]+)+", domain):
+            continue
+        if not isinstance(cookie.get("name"), str) or not isinstance(cookie.get("value"), str):
+            continue
+        domains.setdefault(domain, []).append(cookie)
+
+    if not domains:
+        raise ValueError("No cookies with a valid domain, name and value")
+    return list(domains.items())
+
+
 def load_cookies_for_domain(
-	path: Union[str, Path],
-	domain: Optional[str] = None,
+    path: Union[str, Path], domain: Optional[str] = None
 ) -> Tuple[str, Dict[str, str]]:
-
-	def _clean_domain(d: Optional[str]) -> str:
-		return (d or '').lstrip('.')
-
-	p = Path(path)
-	with p.open('r', encoding='utf-8') as f:
-		cookies = json.load(f)
-	if isinstance(cookies, dict) and 'cookies' in cookies:
-		cookies = cookies['cookies']
-	if not isinstance(cookies, list):
-		raise ValueError("Unsupported cookies JSON format: expected list or {'cookies': [...]}")
-
-	chosen = _clean_domain(domain)
-	if not chosen:
-		for c in cookies:
-			if c.get('name') == 'wekings_session':
-				chosen = _clean_domain(c.get('domain'))
-				if chosen:
-					break
-		if not chosen:
-			domains = [_clean_domain(c.get('domain')) for c in cookies if c.get('domain')]
-			if not domains:
-				raise ValueError("No domains found in cookies")
-			chosen = Counter(domains).most_common(1)[0][0]
-
-	applicable: Dict[str, str] = {}
-	for c in cookies:
-		cd = _clean_domain(c.get('domain'))
-		if not cd:
-			continue
-		if chosen == cd or chosen.endswith('.' + cd) or cd.endswith('.' + chosen):
-			name = c.get('name')
-			val = c.get('value')
-			if name is not None and val is not None:
-				applicable[name] = val
-
-	if not applicable:
-		raise ValueError(f"No applicable cookies for domain '{chosen}'")
-
-	return chosen, applicable
+    bundles = _load_cookie_bundles(path)
+    chosen = (domain or "").strip().lstrip(".").lower()
+    for host, cookies in bundles:
+        if not chosen or chosen == host:
+            return host, {c["name"]: c["value"] for c in cookies}
+    raise ValueError(f"No cookies for domain '{chosen}'")
 
 
 def fetch_and_parse(
-	cookies_path: Union[str, Path],
-	url_path: str,
-	parse_fn: Callable[[str], Dict[str, Optional[int]]],
-	timeout: int = 20,
+    cookies_path: Union[str, Path],
+    url_path: str,
+    parse_fn: Callable[[str], Dict[str, Optional[int]]],
+    timeout: int = 20,
+    preferred_domain: Optional[str] = None,
 ) -> Dict[str, Optional[int]]:
-	domain, cdict = load_cookies_for_domain(cookies_path)
-	base = f"https://{domain}"
-	url = base + (url_path if url_path.startswith('/') else '/' + url_path)
-	headers = {
-		"User-Agent": "Mozilla/5.0",
-		"Accept": "text/html,application/xhtml+xml",
-		"Accept-Language": "ru-RU,ru;q=0.9",
-		"Referer": base + "/",
-		"Connection": "close",
-	}
-	with requests.Session() as s:
-		jar = requests.cookies.RequestsCookieJar()
-		for k, v in cdict.items():
-			jar.set(k, v, domain=domain, path="/")
-		s.cookies = jar
+    """Try each domain with ONLY its own cookies. Never follow cross-site redirects."""
+    from urllib.parse import urljoin, urlparse
 
-		r = s.get(url, headers=headers, timeout=timeout, allow_redirects=True)
-		r.raise_for_status()
-		if 'login' in r.url or ('Вход' in r.text and 'Пароль' in r.text):
-			raise RuntimeError("Неавторизован: проверь куки/сессию")
+    bundles = _load_cookie_bundles(cookies_path)
+    if preferred_domain:
+        preferred = preferred_domain.lower().lstrip(".")
+        bundles.sort(key=lambda pair: pair[0] != preferred)
 
-		parsed = parse_fn(r.text) or {}
-		parsed["domain"] = domain
-		return parsed
+    failures: list[Exception] = []
+    for domain, cookies in bundles:
+        base = f"https://{domain}"
+        url = urljoin(base + "/", url_path.lstrip("/"))
+        headers = {
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "text/html,application/xhtml+xml",
+            "Accept-Language": "ru-RU,ru;q=0.9",
+            "Referer": base + "/",
+            "Connection": "close",
+        }
+        try:
+            with requests.Session() as session:
+                jar = requests.cookies.RequestsCookieJar()
+                for cookie in cookies:
+                    jar.set(
+                        cookie["name"], cookie["value"],
+                        domain=domain, path=cookie.get("path") or "/",
+                        secure=bool(cookie.get("secure", False)),
+                    )
+                session.cookies = jar
+
+                for _ in range(5):
+                    response = session.get(
+                        url, headers=headers, timeout=timeout, allow_redirects=False
+                    )
+                    if 300 <= response.status_code < 400:
+                        target = urljoin(url, response.headers.get("Location", ""))
+                        parsed_target = urlparse(target)
+                        target_path = parsed_target.path.lower().rstrip("/")
+                        if target_path in ("/login", "/start", "/registration"):
+                            raise CharacterUnavailableError(f"{domain}: redirected to sign-in")
+                        if parsed_target.scheme != "https" or parsed_target.hostname != domain:
+                            raise GameUnavailableError(
+                                f"{domain}: redirect to another origin; cookies were not forwarded"
+                            )
+                        if target == url:
+                            raise GameUnavailableError(f"{domain}: redirect loop")
+                        url = target
+                        continue
+                    break
+                else:
+                    raise GameUnavailableError(f"{domain}: too many redirects")
+
+                if response.status_code in (401, 419):
+                    raise CharacterUnavailableError(f"{domain}: authentication required")
+                if response.status_code >= 400:
+                    raise GameUnavailableError(
+                        f"{domain}: HTTP {response.status_code} on {url_path}"
+                    )
+
+                html = response.text
+                if re.search(r"type\s*=\s*['\"]?password", html, re.IGNORECASE) or (
+                    "Вход в игру" in html and "Пароль" in html
+                ):
+                    raise CharacterUnavailableError(f"{domain}: login form returned")
+
+                result = parse_fn(html) or {}
+                if url_path.strip("/") == "monastic":
+                    if result.get("dragon") is None and result.get("serpent") is None:
+                        raise GameUnavailableError(
+                            f"{domain}: boss timers not found (page changed or inaccessible)"
+                        )
+                result["domain"] = domain
+                return result
+        except (CharacterUnavailableError, GameUnavailableError) as error:
+            failures.append(error)
+            print(f"DOMAIN ERROR: {type(error).__name__}: {error}", file=sys.stderr)
+        except requests.exceptions.RequestException as error:
+            failure = GameUnavailableError(f"{domain}: network error ({type(error).__name__})")
+            failures.append(failure)
+            print(f"DOMAIN ERROR: {failure}: {error}", file=sys.stderr)
+        except Exception as error:
+            failure = GameUnavailableError(f"{domain}: response processing failed ({type(error).__name__})")
+            failures.append(failure)
+            print(f"DOMAIN ERROR: {failure}", file=sys.stderr)
+
+    # Explicitly confirmed sign-in failure takes precedence over ambiguous network errors.
+    character_failure = next(
+        (error for error in failures if isinstance(error, CharacterUnavailableError)), None
+    )
+    if character_failure is not None:
+        raise CharacterUnavailableError("All configured domains failed; login required") from character_failure
+    raise GameUnavailableError("No configured game domain returned usable data") from (
+        failures[-1] if failures else None
+    )
 
 
 def monastic_block(
@@ -325,16 +394,11 @@ def _report_access_failure(
     if not recipients:
         return
 
-    if "Неавторизован" in str(error) or (
-        isinstance(error, requests.exceptions.HTTPError)
-        and error.response is not None
-        and error.response.status_code in (401, 403)
-    ):
-        message = "⚠️ Глашатай: не смог войти в игру. Персонаж вылетел — обнови cookies."
-    elif isinstance(error, requests.exceptions.RequestException):
-        message = "⚠️ Глашатай: не смог войти в игру, нет доступа к серверу."
-    else:
-        message = "⚠️ Глашатай: не удалось прочитать таймеры боссов. Проверь вход в игру."
+    message = (
+        "Нет доступа к персонажу"
+        if isinstance(error, CharacterUnavailableError)
+        else "Нет доступа к игре"
+    )
 
     try:
         for response in tg_send(bot_token, recipients, message):
@@ -395,7 +459,7 @@ def notify_if_needed(
 				timeout=timeout,
 			)
 			if monk.get("dragon") is None and monk.get("serpent") is None:
-				raise RuntimeError("No boss timers found on /monastic")
+				raise GameUnavailableError("No boss timers found on /monastic")
 		except Exception as error:
 			_report_access_failure(state, error, bot_token, chat_ids)
 			raise
@@ -474,6 +538,7 @@ def notify_if_needed(
 			url_path="/events",
 			parse_fn=merc_lord_block,
 			timeout=timeout,
+			preferred_domain=monk["domain"],
 		)
 
 		if merc.get("when_iso") and state.get("lord") != today:

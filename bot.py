@@ -430,41 +430,6 @@ def _send_notification_once(
     return False
 
 
-def _report_access_failure(
-    state: dict, error: Exception, bot_token: str,
-    chat_ids: list[Union[str, int]]
-) -> None:
-    """Only one alert per chat until the game becomes readable again."""
-    record = state.get("access_alert")
-    if not isinstance(record, dict):
-        record = {"sent_to": []}
-        state["access_alert"] = record
-    delivered = set(map(str, record.get("sent_to", [])))
-    recipients = [cid for cid in chat_ids if str(cid) not in delivered]
-    if not recipients:
-        return
-
-    message = (
-        "⚠️ Нет доступа к персонажу"
-        if isinstance(error, CharacterUnavailableError)
-        else "⚠️ Нет доступа к игре"
-    )
-
-    try:
-        for response in tg_send(bot_token, recipients, message):
-            cid = str(response["chat_id"])
-            if response.get("ok") is True:
-                delivered.add(cid)
-            else:
-                print(
-                    f"TELEGRAM ALERT ERROR chat={cid}: {response.get('description', 'request failed')}",
-                    file=sys.stderr
-                )
-    except Exception as send_error:
-        print(f"TELEGRAM ALERT ERROR: {type(send_error).__name__}", file=sys.stderr)
-    record["sent_to"] = sorted(delivered)
-
-
 def _notification_threshold(
     seconds_left: int, thresholds_sec: Iterable[int], window_sec: int
 ) -> Optional[int]:
@@ -518,24 +483,18 @@ def notify_if_needed(
 		return f"(в {eta:%H:%M})" if eta.date() == now_msk.date() else f"(в {eta:%H:%M %d.%m})"
 
 	try:
-		# МОНАХ: report the first failure and reset only after a valid read.
-		try:
-			monk = fetch_and_parse(
-				cookies_path=cookies_path,
-				url_path="/monastic",
-				parse_fn=monastic_block,
-				timeout=timeout,
-				preferred_domain=state.get("active_domain"),
-			)
-			if monk.get("dragon") is None and monk.get("serpent") is None:
-				raise GameUnavailableError("No boss timers found on /monastic")
-		except Exception as error:
-			_report_access_failure(state, error, bot_token, chat_ids)
-			raise
-		else:
-			state["active_domain"] = monk["domain"]
-			if state.pop("access_alert", None) is not None:
-				print("Game access restored; outage alert reset")
+		# Keep access errors in GitHub Actions logs only, never notify Telegram.
+		state.pop("access_alert", None)  # Discard legacy alert state if present.
+		monk = fetch_and_parse(
+			cookies_path=cookies_path,
+			url_path="/monastic",
+			parse_fn=monastic_block,
+			timeout=timeout,
+			preferred_domain=state.get("active_domain"),
+		)
+		if monk.get("dragon") is None and monk.get("serpent") is None:
+			raise GameUnavailableError("No boss timers found on /monastic")
+		state["active_domain"] = monk["domain"]
 
 		delivery_failed = False
 		dragon_sec = monk.get("dragon")

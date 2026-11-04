@@ -67,6 +67,10 @@ jobs:
             if [[ -n "$(git status --porcelain notify_state.json)" ]]; then
               git add notify_state.json
               git commit -m "Update notify_state.json [skip ci]"
+            fi
+
+            # Retry pending commits even when the state file did not change again.
+            if [[ "$(git rev-list --count "origin/${GITHUB_REF_NAME}..HEAD")" -gt 0 ]]; then
               if ! git push; then
                 echo "::warning::Failed to push notify_state.json; will retry on next poll."
                 last_failed=1

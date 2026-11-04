@@ -37,6 +37,9 @@ jobs:
             pip install requests
           fi
 
+      - name: Validate boss notification thresholds
+        run: python -m unittest discover -s tests -v
+
       - name: Write cookies to file
         run: |
           cat <<'EOF' > herald_playwekings.ru.json

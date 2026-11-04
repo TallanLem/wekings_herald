@@ -465,6 +465,24 @@ def _report_access_failure(
     record["sent_to"] = sorted(delivered)
 
 
+def _notification_threshold(
+    seconds_left: int, thresholds_sec: Iterable[int], window_sec: int
+) -> Optional[int]:
+    """Return a threshold only within the configured post-crossing window.
+
+    A stale state file or a late workflow restart must not replay a
+    90-minute warning when the boss arrives in only 72 minutes.
+    """
+    if seconds_left <= 0:
+        return None
+    matching = [
+        int(threshold)
+        for threshold in thresholds_sec
+        if 0 <= int(threshold) - seconds_left <= max(0, int(window_sec))
+    ]
+    return min(matching, default=None)
+
+
 def _humanize_time_ru(sec: int) -> str:
 	if sec < 60:
 		return f"{sec} с"
@@ -566,11 +584,10 @@ def notify_if_needed(
 			if sec_left <= 0:
 				continue
 
-			due = [thr for thr in thresholds_sorted if sec_left <= thr]
-			if not due:
+			# Ignore warnings whose intended threshold was crossed too long ago.
+			thr_to_send = _notification_threshold(sec_left, thresholds_sorted, window_sec)
+			if thr_to_send is None:
 				continue
-
-			thr_to_send = min(due)
 			key = f"{beast}_{thr_to_send}"
 			if state.get(key) == today:
 				continue

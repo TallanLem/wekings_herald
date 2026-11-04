@@ -42,30 +42,45 @@ jobs:
           ${{ secrets.COOKIES_JSON }}
           EOF
 
-      - name: Run Herald bot (2h loop)
+      - name: Run Herald bot and persist state each poll
         env:
           BOT_TOKEN:    ${{ secrets.BOT_TOKEN }}
           CHAT_IDS:     ${{ secrets.CHAT_IDS }}
           COOKIES_FILE: herald_playwekings.ru.json
           STATE_FILE:   notify_state.json
-          LOOP_SECONDS: "21000"
-          TICK_SECONDS: "60"
+          LOOP_SECONDS: "0"
+        shell: bash
         run: |
-          python bot.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Commit notify_state.json if changed
-        run: |
-          if [[ -f notify_state.json && -n "$(git status --porcelain notify_state.json)" ]]; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          deadline=$((SECONDS + 21000))
+          last_failed=0
+          while true; do
+            if python bot.py; then
+              last_failed=0
+            else
+              last_failed=1
+              echo "::error::Herald poll failed; state is still being saved."
+            fi
 
-            git pull --rebase origin "${GITHUB_REF_NAME}" || true
+            if [[ -n "$(git status --porcelain notify_state.json)" ]]; then
+              git add notify_state.json
+              git commit -m "Update notify_state.json [skip ci]"
+              if ! git push; then
+                echo "::warning::Failed to push notify_state.json; will retry on next poll."
+                last_failed=1
+              fi
+            fi
 
-            git add notify_state.json
-            git commit -m "Update notify_state.json [skip ci]"
-            git push
-          else
-            echo "No changes in notify_state.json"
+            if (( SECONDS >= deadline )); then
+              break
+            fi
+            sleep 60
+          done
+          if (( last_failed != 0 )); then
+            echo "::error::The final Herald poll or state push failed."
+            exit 1
           fi
 
       - name: Continue chain

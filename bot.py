@@ -483,22 +483,30 @@ def notify_if_needed(
 		return f"(в {eta:%H:%M})" if eta.date() == now_msk.date() else f"(в {eta:%H:%M %d.%m})"
 
 	try:
-		# Keep access errors in GitHub Actions logs only, never notify Telegram.
+		# Independent data sources: one broken page must not suppress the other.
+		# Access/parse errors are logged in GitHub Actions, never in Telegram.
 		state.pop("access_alert", None)  # Discard legacy alert state if present.
-		monk = fetch_and_parse(
-			cookies_path=cookies_path,
-			url_path="/monastic",
-			parse_fn=monastic_block,
-			timeout=timeout,
-			preferred_domain=state.get("active_domain"),
-		)
-		if monk.get("dragon") is None and monk.get("serpent") is None:
-			raise GameUnavailableError("No boss timers found on /monastic")
-		state["active_domain"] = monk["domain"]
-
 		delivery_failed = False
-		dragon_sec = monk.get("dragon")
-		serpent_sec = monk.get("serpent")
+		read_failures = []
+		monk = None
+		try:
+			monk = fetch_and_parse(
+				cookies_path=cookies_path,
+				url_path="/monastic",
+				parse_fn=monastic_block,
+				timeout=timeout,
+				preferred_domain=state.get("active_domain"),
+			)
+			if monk.get("dragon") is None and monk.get("serpent") is None:
+				raise GameUnavailableError("No boss timers found on /monastic")
+			state["active_domain"] = monk["domain"]
+		except Exception as error:
+			read_failures.append(("monastic", error))
+			print(f"MONASTIC READ ERROR: {type(error).__name__}: {error}", file=sys.stderr)
+			monk = None
+
+		dragon_sec = monk.get("dragon") if monk is not None else None
+		serpent_sec = monk.get("serpent") if monk is not None else None
 		print(dragon_sec, serpent_sec)
 		now_msk = datetime.now(MSK)
 
@@ -560,14 +568,20 @@ def notify_if_needed(
 			if not _send_notification_once(state, key, today, bot_token, chat_ids, msg):
 				delivery_failed = True
 
-		# ВЛАД
-		merc = fetch_and_parse(
-			cookies_path=cookies_path,
-			url_path="/events",
-			parse_fn=events_block,
-			timeout=timeout,
-			preferred_domain=monk["domain"],
-		)
+		# Events (Lord and swimming) must still work when /monastic is broken.
+		try:
+			merc = fetch_and_parse(
+				cookies_path=cookies_path,
+				url_path="/events",
+				parse_fn=events_block,
+				timeout=timeout,
+				preferred_domain=monk["domain"] if monk is not None else state.get("active_domain"),
+			)
+			state["active_domain"] = merc["domain"]
+		except Exception as error:
+			read_failures.append(("events", error))
+			print(f"EVENTS READ ERROR: {type(error).__name__}: {error}", file=sys.stderr)
+			merc = {}
 
 		if merc.get("when_iso") and state.get("lord") != today:
 
@@ -603,6 +617,9 @@ def notify_if_needed(
 
 		if delivery_failed:
 			raise RuntimeError("Telegram rejected one or more notifications")
+		if read_failures:
+			pages = ", ".join(page for page, _ in read_failures)
+			raise RuntimeError(f"Herald could not read: {pages}") from read_failures[0][1]
 	finally:
 		_save_state(state_file, state)
 

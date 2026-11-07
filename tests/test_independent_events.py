@@ -111,5 +111,66 @@ class IndependentEventsTests(unittest.TestCase):
         self.assertEqual(messages, [])
 
 
+    def test_swimming_works_when_monastic_is_broken(self):
+        delivered = []
+
+        def fake_fetch(*args, **kwargs):
+            if kwargs["url_path"] == "/monastic":
+                raise bot.GameUnavailableError("No boss timers")
+            return {
+                "domain": "wekings.online", "when_iso": None, "city": None,
+                "swimming_weather": [{
+                    "id": "20261107_1938_20261107_2200",
+                    "day": "2026-11-07",
+                    "message": "⚓ Хорошая погода для плавания до 22:00 07.11.26!",
+                }],
+            }
+
+        def fake_send(token, chat_ids, text, **kwargs):
+            delivered.append(text)
+            return [{"chat_id": str(cid), "ok": True} for cid in chat_ids]
+
+        with tempfile.TemporaryDirectory() as folder:
+            with (
+                patch.object(bot, "datetime", FixedNov7),
+                patch.object(bot, "fetch_and_parse", side_effect=fake_fetch),
+                patch.object(bot, "tg_send", side_effect=fake_send),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "monastic"):
+                    bot.notify_if_needed(
+                        "fake-cookies.json", "fake-token", ["-123"],
+                        state_file=Path(folder) / "notify_state.json",
+                    )
+            self.assertEqual(len(delivered), 1)
+            self.assertTrue(delivered[0].startswith("⚓"))
+
+    def test_boss_still_works_when_events_are_broken(self):
+        delivered = []
+
+        def fake_fetch(*args, **kwargs):
+            if kwargs["url_path"] == "/events":
+                raise bot.GameUnavailableError("Events are unavailable")
+            return {"domain": "wekings.online", "dragon": 90 * 60, "serpent": None}
+
+        def fake_send(token, chat_ids, text, **kwargs):
+            delivered.append(text)
+            return [{"chat_id": str(cid), "ok": True} for cid in chat_ids]
+
+        with tempfile.TemporaryDirectory() as folder:
+            with (
+                patch.object(bot, "datetime", FixedNov7),
+                patch.object(bot, "fetch_and_parse", side_effect=fake_fetch),
+                patch.object(bot, "tg_send", side_effect=fake_send),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "events"):
+                    bot.notify_if_needed(
+                        "fake-cookies.json", "fake-token", ["-123"],
+                        state_file=Path(folder) / "notify_state.json",
+                        thresholds_sec=[91 * 60, 46 * 60, 16 * 60],
+                    )
+            self.assertEqual(len(delivered), 1)
+            self.assertIn("Дракон", delivered[0])
+
+
 if __name__ == "__main__":
     unittest.main()
